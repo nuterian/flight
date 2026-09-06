@@ -12,6 +12,7 @@ import { Title } from './title.js';
 import { Music } from './music.js';
 import { TRACKS } from './scores.js';
 import { store } from './audio.js';
+import { dailySeed } from './daily.js';
 
 const $ = (id) => document.getElementById(id);
 const touch = isTouchDevice();
@@ -39,6 +40,7 @@ async function boot() {
   const glow = new Boxes(scene, 1400, { glow: true });
   const soft = new Boxes(scene, 1800, { soft: true });   // translucent discs, rings and strips: prop blur, splashes, waterfalls
   const world = createWorld(scene, { mobile, lit, glow, soft });
+  world.setTimeOfDay(['morning', 'noon', 'golden'][dailySeed() % 3]);   // the title wears today's light
 
   // Post-processing: scene pass with an emissive MRT target so only tracers, flashes and the sun bloom.
   const scenePass = pass(scene, camera);

@@ -844,8 +844,11 @@ export function createWorld(scene, { mobile, lit, glow, soft }) {
   const sunScreen = { uv: uniform(new THREE.Vector2(0.5, 0.5)), strength: uniform(0) };
   const sunNdc = new THREE.Vector3(), tmpDir = new THREE.Vector3();
   const shadowFocus = new THREE.Vector3(), sunM = new THREE.Matrix4(), sunQ = new THREE.Quaternion(), sunS = new THREE.Vector3(150, 150, 150), sunP = new THREE.Vector3(), sunE = new THREE.Euler();
-  let sunSpin = 0;
+  let sunSpin = 0, frameNo = 0;
   let timeOfDay = 'noon';
+  // The shadow map is redrawn every `shadowEvery` frames: the sun is fixed and the terrain never moves, so only
+  // the planes' shadows lag, by a frame at most. 1 redraws every frame.
+  const shadow = { every: 2 };
   /** Swings the sun and retints the light, sky and fog for one of TIMES. The water is not touched: it only
    *  receives the new light like everything else. */
   const setTimeOfDay = (name) => {
@@ -908,10 +911,10 @@ export function createWorld(scene, { mobile, lit, glow, soft }) {
     sun.position.copy(shadowFocus).addScaledVector(SUN_DIR, 1150);
     sun.target.position.copy(shadowFocus);
     sun.target.updateMatrixWorld();
-    sm.needsUpdate = true;
+    sm.needsUpdate = (frameNo++ % shadow.every) === 0;
   };
 
   /** Distance to the nearest big waterfall (for its rumble). */
   const nearestFall = (pos) => { let d = Infinity; for (const f of bigFalls) d = Math.min(d, Math.hypot(pos.x - f.x, pos.y - f.y, pos.z - f.z)); return d; };
-  return { update, setDanger: bounds.setDanger, props, nearestFall, bigFalls, sunScreen, smear, clouds: clouds.clouds, brushPalms: props.brushPalms, setTimeOfDay, get timeOfDay() { return timeOfDay; }, landmarks, arenas };
+  return { update, setDanger: bounds.setDanger, props, nearestFall, bigFalls, sunScreen, smear, clouds: clouds.clouds, brushPalms: props.brushPalms, setTimeOfDay, get timeOfDay() { return timeOfDay; }, landmarks, arenas, shadow };
 }
