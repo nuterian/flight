@@ -19,6 +19,7 @@ phone, open it in landscape and tilt to steer.
 | `I` / `C` | invert pitch / recenter tilt |
 | `T` | today's flight |
 | `M` / `Esc` | mute / quit to title |
+| Gamepad | left stick flies, right trigger fires, left trigger boosts, bumpers rudder, Start / Back |
 
 Phones: tilt like a steering wheel to roll, tip the top edge toward you to climb, hold FIRE and BOOST. The `?` on the
 title screen has the full list.

@@ -125,7 +125,16 @@ async function boot() {
     showTrack();
     trackBtn.classList.remove('pop'); void trackBtn.offsetWidth; trackBtn.classList.add('pop');
   });
-  const menuMusic = () => { const on = game.state === 'title' || game.state === 'gameover'; if (on) music.play(); else music.stop(); };
+  // The theme runs through everything: full on the title and the debrief, ducked under the engine while flying, a
+  // whisper while the wreck falls. M mutes it all.
+  let musicState = null;
+  const menuMusic = () => {
+    const st = game.state;
+    if (st === musicState) return;
+    musicState = st;
+    music.play();
+    music.setLevel(st === 'playing' ? 0.5 : st === 'dead' ? 0.12 : 1);
+  };
   menuMusic();
   if (import.meta.env.DEV) import('./dev.js').then((d) => d.attachDevHooks({ game, input, world, camera, pipeline, renderer, boxes: [lit, glow, soft], useTitleLens, title, music, menuMusic }));
 

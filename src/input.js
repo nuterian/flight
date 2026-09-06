@@ -31,6 +31,25 @@ export class Input {
     });
     window.addEventListener('keyup', (e) => this.keys.delete(e.code));
     window.addEventListener('blur', () => this.keys.clear());
+    this.padButtons = 0;   // last frame's pressed mask, for edge-triggered pad buttons
+  }
+
+  /** The first connected gamepad, folded into the same axes the keyboard feeds: left stick flies, right trigger or
+   *  A fires, left trigger or X boosts, B brakes, bumpers are the rudder, Start starts and Back quits. */
+  pad() {
+    const pads = navigator.getGamepads ? navigator.getGamepads() : null;
+    let gp = null;
+    if (pads) for (const g of pads) if (g && g.connected) { gp = g; break; }
+    if (!gp) return null;
+    const b = (i) => (gp.buttons[i] ? (gp.buttons[i].value > 0.4 || gp.buttons[i].pressed) : false);
+    const roll = curve(gp.axes[0] || 0, 0.12), pitch = curve(-(gp.axes[1] || 0), 0.12);
+    const mask = (b(9) ? 1 : 0) | (b(8) ? 2 : 0) | (b(3) ? 4 : 0);
+    const rose = mask & ~this.padButtons;
+    this.padButtons = mask;
+    if (rose & 1 && this.onStart) this.onStart();
+    if (rose & 2 && this.onAbort) this.onAbort();
+    if (rose & 4 && this.onMute) this.onMute();
+    return { roll, pitch, yaw: (b(5) ? 1 : 0) - (b(4) ? 1 : 0), fire: b(7) || b(0), boost: b(6) || b(2), brake: b(1) };
   }
 
   /** Must be called from a user gesture (tap). Requests motion permission on iOS. */
@@ -114,16 +133,17 @@ export class Input {
       roll = this.touch.stick.x; pitch = -this.touch.stick.y;
     }
 
-    // Keyboard always works as a fallback layer, additive so a laptop with touch still plays.
-    const kp = axis('ArrowDown', 'ArrowUp') + axis('KeyS', 'KeyW');
-    const kr = axis('ArrowLeft', 'ArrowRight') + axis('KeyA', 'KeyD');
-    yaw = axis('KeyQ', 'KeyE');
+    // Keyboard always works as a fallback layer, additive so a laptop with touch still plays. A gamepad too.
+    const gp = this.pad();
+    const kp = axis('ArrowDown', 'ArrowUp') + axis('KeyS', 'KeyW') + (gp ? gp.pitch : 0);
+    const kr = axis('ArrowLeft', 'ArrowRight') + axis('KeyA', 'KeyD') + (gp ? gp.roll : 0);
+    yaw = THREE.MathUtils.clamp(axis('KeyQ', 'KeyE') + (gp ? gp.yaw : 0), -1, 1);
     pitch = THREE.MathUtils.clamp(pitch + kp, -1, 1);
     roll = THREE.MathUtils.clamp(roll + kr, -1, 1);
     if (this.invertPitch) pitch = -pitch;
 
-    throttle = (k.has('ShiftLeft') || k.has('ShiftRight') || this.touch.boost) ? 1 : ((k.has('ControlLeft') || k.has('ControlRight') || this.touch.brake) ? -1 : 0);
-    fire = k.has('Space') || this.touch.fire;
+    throttle = (k.has('ShiftLeft') || k.has('ShiftRight') || this.touch.boost || (gp && gp.boost)) ? 1 : ((k.has('ControlLeft') || k.has('ControlRight') || this.touch.brake || (gp && gp.brake)) ? -1 : 0);
+    fire = k.has('Space') || this.touch.fire || !!(gp && gp.fire);
 
     this.pitch = pitch; this.roll = roll; this.yaw = yaw; this.throttle = throttle; this.fire = fire;
   }

@@ -8,6 +8,12 @@ export class Music {
   constructor(sound, score) { this.sound = sound; this.score = score; this.playing = false; this.timer = null; this.ready = false; }
   get STEP() { return 60 / this.score.bpm / 4; }
 
+  /** Scales the theme's level while it plays: full on the title, ducked under the engine in play. */
+  setLevel(scale) {
+    this.scale = scale;
+    if (this.playing && this.out) this.out.gain.setTargetAtTime((this.score.level ?? 0.5) * scale, this.sound.ctx.currentTime, 0.6);
+  }
+
   setScore(score) {
     if (score === this.score) return;
     const was = this.playing;
@@ -47,7 +53,7 @@ export class Music {
     this.playing = true;
     this.echo.delayTime.value = this.STEP * 6;
     this.out.gain.cancelScheduledValues(ctx.currentTime);
-    this.out.gain.setTargetAtTime(this.score.level ?? 0.5, ctx.currentTime, 0.8);
+    this.out.gain.setTargetAtTime((this.score.level ?? 0.5) * (this.scale ?? 1), ctx.currentTime, 0.8);
     this.step = 0; this.next = ctx.currentTime + 0.15;
     clearInterval(this.timer);
     this.timer = setInterval(() => this.pump(), 100);

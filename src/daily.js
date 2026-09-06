@@ -11,6 +11,10 @@ export function todayKey(d = new Date()) {
 export function todayLabel(d = new Date()) {
   return d.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' });
 }
+/** The daily's number: day 1 was the first daily flight. */
+export function dayNumber(key = todayKey()) {
+  return Math.max(1, Math.round((Date.UTC(+key.slice(0, 4), +key.slice(5, 7) - 1, +key.slice(8, 10)) - Date.UTC(2026, 8, 6)) / 86400000) + 1);
+}
 /** FNV-1a of the date key: the day's seed. */
 export function dailySeed(key = todayKey()) {
   let h = 0x811c9dc5;
@@ -38,5 +42,5 @@ export function saveDailyBest(entry) { store.set('skyfight.daily', JSON.stringif
 export function shareLine({ date, wave, kills, score, wings, secrets, secretCount }) {
   const W = ['\u{1F7EB}', '⬜', '\u{1F7E8}'];   // brown, white, yellow squares: bronze, silver, gold
   const pips = W.map((c, i) => (i < wings ? c : '⬛')).join('') + ' ' + Array.from({ length: secretCount }, (_, i) => (i < secrets ? '\u{1F7E9}' : '⬛')).join('');
-  return `Flight ${date} · wave ${wave} · ${kills} kills · ${score} · ${pips}`;
+  return `Flight #${dayNumber(date)} · wave ${wave} · ${kills} kills · ${score} · ${pips}`;
 }

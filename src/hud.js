@@ -12,7 +12,7 @@ export class Hud {
       hud: $('hud'), score: $('score'), wave: $('wave'), enemies: $('enemies'), health: $('health'), speed: $('speed'),
       crosshair: $('crosshair'), lead: $('leadret'), markers: $('markers'), banner: $('banner'), warning: $('warning'),
       vignette: $('vignette'), title: $('title'), gameover: $('gameover'), best: $('best'), newbest: $('newbest'), touch: $('touch'),
-      portal: $('portalmark'), popups: $('popups'), dbmode: $('dbmode'), dbscore: document.querySelector('#gameover .scoreline'), dbtiles: $('dbtiles'), dblog: $('dblog'), dbmedal: $('dbmedal'), share: $('btn-share'), gohint: $('gohint'), medals: $('medals'), dailyinfo: $('dailyinfo'),
+      portal: $('portalmark'), popups: $('popups'), hitarc: $('hitarc'), dbmode: $('dbmode'), dbscore: document.querySelector('#gameover .scoreline'), dbtiles: $('dbtiles'), dblog: $('dblog'), dbmedal: $('dbmedal'), share: $('btn-share'), gohint: $('gohint'), medals: $('medals'), dailyinfo: $('dailyinfo'),
       healthwrap: $('healthwrap'), killfeed: $('killfeed'), combo: $('combo'), mute: $('mute'), pips: $('pips'), speedbar: $('speedbar'), btnMute: $('btn-mute'),
     };
     this.pipCount = 0;
@@ -82,6 +82,12 @@ export class Hud {
   damage(amount) { this.flash = Math.min(1, this.flash + amount); restart(this.el.healthwrap, 'hurt'); }
   /** Two frames of chromatic split on the HUD text. */
   hit() { this.hitFrames = 2; }
+  /** A red arc on the edge of the screen toward whoever just hit you. `angle` is radians clockwise from ahead. */
+  hitFrom(angle) {
+    const a = this.el.hitarc, deg = angle * 180 / Math.PI;
+    a.style.background = `conic-gradient(from ${deg - 24}deg at 50% 50%, rgba(255,60,40,0.6) 0deg 48deg, transparent 48deg)`;
+    restart(a, 'show');
+  }
 
   /** One pip per bandit in the wave; downed ones dim out. */
   pips(total, alive) {

@@ -90,6 +90,10 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: #6ec1ff; fon
 #combo.pop { animation: comboPop 0.45s var(--spring); }
 @keyframes comboPop { 0% { transform: translateX(-50%) scale(2.8) rotate(-8deg); filter: brightness(1.6); } 100% { transform: translateX(-50%) scale(1); } }
 #crosshair.whiz { animation: whiz 0.25s ease-out; }
+/* where the last hit came from: a wedge of red at the screen edge, rotated toward the shooter */
+#hitarc { position: absolute; inset: 0; opacity: 0; pointer-events: none; -webkit-mask-image: radial-gradient(50vw 50vh at 50% 50%, transparent 66%, #000 100%); mask-image: radial-gradient(50vw 50vh at 50% 50%, transparent 66%, #000 100%); }
+#hitarc.show { animation: hitArc 0.9s ease-out both; }
+@keyframes hitArc { 0% { opacity: 1; } 100% { opacity: 0; } }
 /* points rising from a kill */
 #popups { position: absolute; inset: 0; pointer-events: none; }
 .popup { position: absolute; display: none; transform: translate(-50%, -50%); font-size: 18px; font-weight: 900; letter-spacing: 0.06em; color: var(--sun); text-shadow: 0 2px 0 rgba(0,0,0,0.35), 0 0 12px rgba(255,209,102,0.5); white-space: nowrap; }

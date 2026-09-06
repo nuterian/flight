@@ -11,7 +11,7 @@ import { groundAt, isWaterAt, kindAt, KIND, BOUNDS } from './terrain.js';
 import { Portal } from './portal.js';
 import { SUN_DIR } from './world.js';
 import { Medals, MEDALS, byId } from './medals.js';
-import { todayKey, todayLabel, dailySeed, mulberry32, loadDailyBest, saveDailyBest, shareLine } from './daily.js';
+import { todayKey, todayLabel, dailySeed, mulberry32, loadDailyBest, saveDailyBest, shareLine, dayNumber } from './daily.js';
 
 const tv = new THREE.Vector3(), tv2 = new THREE.Vector3(), tq = new THREE.Quaternion(), spreadV = new THREE.Vector3();
 const clamp = THREE.MathUtils.clamp;
@@ -537,7 +537,7 @@ export class Game {
       }
       if (p.alive && ac.pos.distanceToSquared(p.pos) < 64) {
         this.killAircraft(ac, 1); this.registerKill('RAMMED', 60, ac.pos);
-        this.hurtPlayer(20);
+        this.hurtPlayer(20, ac.pos);
       }
       this.smokeTrail(ac, dt);
     }
@@ -573,7 +573,7 @@ export class Game {
       }
       else this.addScore(2);
     }, (pt, water) => this.effects.groundHit(pt, water), this.assist);
-    this.enemyBullets.update(dt, p.alive ? [p] : [], (t, point, dmg, owner) => { this.effects.hitSpark(point); if (owner === this.airship) this.turretDamage += dmg; this.hurtPlayer(dmg); }, (pt, water) => this.effects.groundHit(pt, water));
+    this.enemyBullets.update(dt, p.alive ? [p] : [], (t, point, dmg, owner) => { this.effects.hitSpark(point); if (owner === this.airship) this.turretDamage += dmg; this.hurtPlayer(dmg, owner.pos); }, (pt, water) => this.effects.groundHit(pt, water));
     if (p.alive) {   // near misses: a bandit's bullet inside ten units of you that did not hit
       const eb = this.enemyBullets, P = eb.pos;
       for (const i of eb.active) {
@@ -645,9 +645,11 @@ export class Game {
     this.contrails.push(1, dt, tv, ac.up, hi);
   }
 
-  hurtPlayer(dmg) {
+  /** `from` is where the hit came from, for the arc on the screen edge. */
+  hurtPlayer(dmg, from = null) {
     const p = this.player;
     if (!p.alive) return;
+    if (from) { const l = p.toLocal(from, tv); this.hud.hitFrom(Math.atan2(l.x, l.z)); }
     this.bestStreak = Math.max(this.bestStreak, this.streak); this.streak = 0; this.note('hit');
     this.regenDelay = 4;
     this.hud.damage(dmg / 25);
@@ -699,7 +701,7 @@ export class Game {
     else next = MEDALS.find((m) => m.wave && !this.medals.has(m.id)) || null;
     this.hud.medals(this.medals);
     this.hud.showDebrief({
-      mode: this.daily ? `Today's flight · ${todayLabel()}` : 'Free flight',
+      mode: this.daily ? `Flight #${dayNumber()} · ${todayLabel()}` : 'Free flight',
       score: this.score, waves: this.wave, kills: this.kills, accuracy: this.shots ? this.hits / this.shots * 100 : 0,
       bestCombo: this.bestCombo, streak: this.bestStreak, aloft: this.aloft, medal, next, isBest, share, log: this.log,
     });
