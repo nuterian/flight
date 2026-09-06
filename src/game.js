@@ -39,6 +39,8 @@ export class Game {
     this.playerBullets = new BulletPool(glow, 260, 0xffe08a);
     this.enemyBullets = new BulletPool(glow, 260, 0xff5a3c);
     this.trails = new Trails(scene, (MAX_ENEMIES + 1) * 2);
+    // contrails: up in the cold air above 360 the player's wingtips draw long white lines that hang for a while
+    this.contrails = new Trails(scene, 2, 140, 0.45, { fade: 0.05, opacity: 0.42, sample: 0.09, widen: true, renderOrder: 5 });
 
     this.pack = { hunting: 0, max: 1 };   // how many bandits are hunting the player right now, and how many may
     this.assist = { radius: 0, turn: 0, cone: 0.08, range: 380 };   // aim help for the player's guns, generous early
@@ -106,6 +108,7 @@ export class Game {
       this.player.reset(tv, tq, PLAYER_STATS.minSpeed);
     } else this.player.reset(new THREE.Vector3(0, 190, 700), tq.identity(), PLAYER_STATS.minSpeed);   // slow start so the gear tucks up on the way out
     for (const t of this.player.trails) this.trails.reset(t);
+    this.contrails.reset(0); this.contrails.reset(1);
     this.camQuat.copy(this.player.quat);
     this.camPos.copy(this.player.pos).add(tv.set(0, 8, 30));
     this.state = 'playing';
@@ -229,6 +232,7 @@ export class Game {
     this.found.add(l.id);
     this.addScore(500);
     this.hud.kill(`${l.name} FOUND  +500`);
+    this.hud.popup(l.pos, '+500', true);
     this.hud.bump('score');
     this.audio.kill(2);
     this.earn(l.id);
@@ -244,7 +248,7 @@ export class Game {
 
   /** The airship is down: the escorts break off through the portal and the wave is over. */
   airshipDown() {
-    this.registerKill('AIRSHIP DOWN', 300 * this.wave);
+    this.registerKill('AIRSHIP DOWN', 300 * this.wave, this.airship.pos);
     this.shakeAt(this.airship.pos, 1.2);
     this.audio.explosion(this.airship.pos.distanceTo(this.player.pos), 2.4);
     this.killCam = 1.4; this.killPoint.copy(this.airship.pos);
@@ -388,8 +392,9 @@ export class Game {
     this.wasFast = fast || (this.wasFast && p.speed > p.stats.maxSpeed * 0.97);
   }
 
-  /** A shot-down bandit: quick successive kills chain into a combo that multiplies the score. */
-  registerKill(label, base) {
+  /** A shot-down bandit: quick successive kills chain into a combo that multiplies the score. `at` is where the
+   *  points pop up in the world. */
+  registerKill(label, base, at = null) {
     this.kills++; this.note('kill');
     this.combo = this.comboTimer > 0 ? this.combo + 1 : 1;
     this.bestCombo = Math.max(this.bestCombo, this.combo);
@@ -397,6 +402,7 @@ export class Game {
     const pts = base * this.combo;
     this.addScore(pts);
     this.hud.kill(`${label}  +${pts}`);
+    if (at) this.hud.popup(at, `+${pts}`, this.combo > 1);
     if (this.combo > 1) { this.hud.combo(this.combo); this.effects.shake = Math.max(this.effects.shake, 0.25 + this.combo * 0.08); }
     this.hud.bump('score');
     this.audio.kill(this.combo);
@@ -526,16 +532,17 @@ export class Game {
       }
       if (e.brain.wantsFire && p.alive && this.wave > 1) this.fire(ac, this.enemyBullets, 4 + this.wave * 0.5, 0.02 + (1 - e.brain.skill) * 0.03, 8);
       if (ac.pos.y < groundAt(ac.pos.x, ac.pos.z) + 2) {
-        this.killAircraft(ac, 0.8); this.registerKill('BANDIT CRASHED', 40); if (isWaterAt(ac.pos.x, ac.pos.z)) this.effects.splash(ac.pos);
+        this.killAircraft(ac, 0.8); this.registerKill('BANDIT CRASHED', 40, ac.pos); if (isWaterAt(ac.pos.x, ac.pos.z)) this.effects.splash(ac.pos);
         continue;
       }
       if (p.alive && ac.pos.distanceToSquared(p.pos) < 64) {
-        this.killAircraft(ac, 1); this.registerKill('RAMMED', 60);
+        this.killAircraft(ac, 1); this.registerKill('RAMMED', 60, ac.pos);
         this.hurtPlayer(20);
       }
       this.smokeTrail(ac, dt);
     }
-    if (p.alive) this.smokeTrail(p, dt);
+    if (p.alive) { this.smokeTrail(p, dt); this.contrail(p, dt); }
+    this.contrails.update(dt);
     // ---- the airship
     if (this.airship.alive) {
       if (this.airship.update(dt, p, (muzzle, dir, k) => this.turretFire(muzzle, dir, k))) this.airshipDown();
@@ -552,9 +559,13 @@ export class Game {
       if (t.damage(dmg)) {
         if (t.ship) { this.addScore(10); return; }   // the gondola is done: the airship handles its own fall
         const type = this.enemies.find((e) => e.ac === t)?.type || 'hound';
-        this.killAircraft(t, 1); this.registerKill(TYPE_LABEL[type], TYPE_SCORE[type] * this.wave);
+        this.killAircraft(t, 1); this.registerKill(TYPE_LABEL[type], TYPE_SCORE[type] * this.wave, t.pos);
         if (p.pos.y - groundAt(p.pos.x, p.pos.z) < 8) this.earn('wavetop');
-        if (this.pending === 0 && this.aliveEnemies().length === 0 && !this.airship.alive) {
+        const last = this.pending === 0 && this.aliveEnemies().length === 0 && !this.airship.alive;
+        if (!last && type === 'ace') {   // an ace down earns a short turn of the camera round its wreck
+          this.killCam = 0.4; this.killPoint.copy(t.pos);
+          this.killAngle = Math.atan2(this.camera.position.x - t.pos.x, this.camera.position.z - t.pos.z);
+        } else if (last) {
           // the wave's last bandit: swing the camera round its explosion in slow motion
           this.killCam = 0.7; this.killPoint.copy(t.pos);
           this.killAngle = Math.atan2(this.camera.position.x - t.pos.x, this.camera.position.z - t.pos.z);
@@ -596,7 +607,7 @@ export class Game {
     if (this.state === 'gameover') this.hud.tickDebrief(dt);
     this.updateCamera(dt);
     const alive = this.player.alive && this.state === 'playing';
-    this.audio.setFlight(alive ? this.player.speed : 0, alive ? this.player.input.throttle : 0, alive && this.outside, dt);
+    this.audio.setFlight(alive ? this.player.speed : 0, alive ? this.player.input.throttle : 0, alive && this.outside, dt, alive ? this.player.health / this.player.maxHealth : 1);
     if (this.world.nearestFall) this.audio.setAmbience(clamp(1 - this.world.nearestFall(this.camera.position) / 380, 0, 1));
     if (this.state === 'playing') {
       const p = this.player;
@@ -623,6 +634,15 @@ export class Game {
       tv.copy(ac.pos).addScaledVector(ac.forward, -4.5);
       this.effects.trailSmoke(tv, ac.velocity, frac < 0.25);
     }
+  }
+
+  /** Contrails: the wingtips draw in the cold air high up, fading in over the last sixty units of the climb. */
+  contrail(ac, dt) {
+    const hi = clamp((ac.pos.y - 360) / 60, 0, 1);
+    tv.copy(ac.pos).addScaledVector(ac.right, 7.9).addScaledVector(ac.forward, -1.5);
+    this.contrails.push(0, dt, tv, ac.up, hi);
+    tv.copy(ac.pos).addScaledVector(ac.right, -7.9).addScaledVector(ac.forward, -1.5);
+    this.contrails.push(1, dt, tv, ac.up, hi);
   }
 
   hurtPlayer(dmg) {

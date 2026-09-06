@@ -888,8 +888,9 @@ export function createWorld(scene, { mobile, lit, glow, soft }) {
     if (smearReady && dt > 0 && dt < 0.1 && speed > 0) {
       dq.copy(prevCamQ).invert().multiply(camera.quaternion);                                   // the turn since last frame
       dp.copy(camera.position).sub(prevCamP).applyQuaternion(camInv.copy(camera.quaternion).invert());   // the move, in the camera's frame
-      const omega = 2 * Math.acos(Math.min(1, Math.abs(dq.w))) / dt, v = dp.length() / dt;
+      const turn = 2 * Math.acos(Math.min(1, Math.abs(dq.w))), omega = turn / dt, v = dp.length() / dt;
       gate = Math.max(THREE.MathUtils.smoothstep(omega, 0.6, 1.6), THREE.MathUtils.smoothstep(v, 85, 115)) * 0.35;
+      if (turn > 0.5 || dp.length() > 45) gate = 0;   // a cut (kill cam in or out, a restart) is not motion
     }
     if (gate > 0) {
       smear.shift.value.set(2 * dq.y * fy * gate, -2 * dq.x * fy * gate);   // yaw and pitch: the whole frame slides

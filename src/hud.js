@@ -12,13 +12,14 @@ export class Hud {
       hud: $('hud'), score: $('score'), wave: $('wave'), enemies: $('enemies'), health: $('health'), speed: $('speed'),
       crosshair: $('crosshair'), lead: $('leadret'), markers: $('markers'), banner: $('banner'), warning: $('warning'),
       vignette: $('vignette'), title: $('title'), gameover: $('gameover'), best: $('best'), newbest: $('newbest'), touch: $('touch'),
-      portal: $('portalmark'), dbmode: $('dbmode'), dbscore: document.querySelector('#gameover .scoreline'), dbtiles: $('dbtiles'), dblog: $('dblog'), dbmedal: $('dbmedal'), share: $('btn-share'), gohint: $('gohint'), medals: $('medals'), dailyinfo: $('dailyinfo'),
+      portal: $('portalmark'), popups: $('popups'), dbmode: $('dbmode'), dbscore: document.querySelector('#gameover .scoreline'), dbtiles: $('dbtiles'), dblog: $('dblog'), dbmedal: $('dbmedal'), share: $('btn-share'), gohint: $('gohint'), medals: $('medals'), dailyinfo: $('dailyinfo'),
       healthwrap: $('healthwrap'), killfeed: $('killfeed'), combo: $('combo'), mute: $('mute'), pips: $('pips'), speedbar: $('speedbar'), btnMute: $('btn-mute'),
     };
     this.pipCount = 0;
     this.shownScore = 0;
     this.cache = {};
     this.markerPool = [];
+    this.popupPool = []; this.popupsLive = [];
     this.bannerTimer = null;
     this.flash = 0;
     this.hitFrames = 0;
@@ -55,6 +56,15 @@ export class Hud {
     feed.prepend(row);
     while (feed.children.length > 4) feed.lastChild.remove();
     setTimeout(() => row.remove(), 2700);
+  }
+
+  /** Points that rise from a spot in the world: pooled, placed each frame by updateOverlay, gone after 1.3 s. */
+  popup(worldPos, text, big = false) {
+    let el = this.popupPool.pop();
+    if (!el) { el = document.createElement('div'); el.className = 'popup'; this.el.popups.appendChild(el); }
+    el.textContent = text; el.classList.toggle('big', big); el.style.display = 'block';
+    restart(el, 'rise');
+    this.popupsLive.push({ el, pos: worldPos.clone(), t: 0 });
   }
 
   combo(n) { const c = this.el.combo; c.textContent = `x${n} COMBO`; c.classList.add('show'); restart(c, 'pop'); }
@@ -164,6 +174,13 @@ export class Hud {
       }
     }
     for (let i = n; i < this.markerPool.length; i++) this.markerPool[i].style.display = 'none';
+    for (let i = this.popupsLive.length - 1; i >= 0; i--) {
+      const it = this.popupsLive[i];
+      it.t += 1 / 60;
+      v.copy(it.pos).project(camera);
+      if (it.t > 1.3 || v.z > 1 || Math.abs(v.x) > 1.1 || Math.abs(v.y) > 1.1) { it.el.style.display = 'none'; this.popupPool.push(it.el); this.popupsLive.splice(i, 1); continue; }
+      it.el.style.left = `${(v.x + 1) * 0.5 * W}px`; it.el.style.top = `${(1 - v.y) * 0.5 * H}px`;
+    }
     const pm = this.el.portal;
     if (!portal) { pm.style.display = 'none'; return; }
     v.copy(portal).project(camera);
@@ -183,7 +200,11 @@ export class Hud {
     }
   }
 
-  resetScore() { this.shownScore = 0; this.flash = 0; this.el.killfeed.replaceChildren(); this.comboOff(); }
+  resetScore() {
+    this.shownScore = 0; this.flash = 0; this.el.killfeed.replaceChildren(); this.comboOff();
+    for (const it of this.popupsLive) { it.el.style.display = 'none'; this.popupPool.push(it.el); }
+    this.popupsLive.length = 0;
+  }
 
   /** The title's medal pips: every medal, coloured once earned, a question mark's worth of grey for secrets. */
   medals(medals) {

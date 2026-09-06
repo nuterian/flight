@@ -16,7 +16,7 @@ export class Sound {
     const wake = () => { if (this.ctx && this.ctx.state === 'suspended') this.ctx.resume().catch(() => {}); };
     document.addEventListener('visibilitychange', wake);
     window.addEventListener('keydown', wake); window.addEventListener('pointerdown', wake);
-    this.warnTimer = 0; this.warnHi = false;
+    this.warnTimer = 0; this.warnHi = false; this.beatTimer = 0;
     this.lastGun = 0; this.lastHit = 0; this.lastWhiz = 0;
   }
 
@@ -78,10 +78,14 @@ export class Sound {
     return this.muted;
   }
 
-  /** Continuous layers, once per displayed frame. speed 0 = engine off. */
-  setFlight(speed, throttle, warning, dt) {
+  /** Continuous layers, once per displayed frame. speed 0 = engine off. `hull` 0..1 brings in a heartbeat below 0.3. */
+  setFlight(speed, throttle, warning, dt, hull = 1) {
     if (!this.ctx) return;
     const t = this.ctx.currentTime, e = this.engine, w = this.wind;
+    if (hull < 0.3 && speed > 0) {
+      this.beatTimer -= dt;
+      if (this.beatTimer <= 0) { this.beatTimer = 0.5 + hull * 1.6; this.blip(70, 40, 'sine', 0.18, 0.28); this.blip(60, 38, 'sine', 0.14, 0.18); }
+    } else this.beatTimer = 0;
     const on = speed > 0 ? 1 : 0;
     const f = 55 + speed * 0.9;
     e.a.frequency.setTargetAtTime(f, t, 0.08);
