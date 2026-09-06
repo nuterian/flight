@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Flight</title>
+  <link rel="stylesheet" href="/src/style.css" />
+</head>
+<body>
+  <canvas id="game"></canvas>
+
+  <div id="hud" class="hidden">
+    <div id="topbar">
+      <div class="stat left"><span class="label">Score</span><span id="score" class="value">0</span></div>
+      <div class="stat center"><span class="label">Wave</span><span id="wave" class="value">1</span><div id="pips"></div></div>
+      <div class="stat right"><span class="label">Bandits</span><span id="enemies" class="value">0</span></div>
+    </div>
+    <div id="killfeed"></div>
+    <div id="combo"></div>
+    <div id="bottombar">
+      <div class="gauge left"><span class="label">Hull</span><div class="bar" id="healthwrap"><div id="health"></div><i></i><i></i><i></i></div></div>
+      <div class="gauge right"><span class="label">Speed <b id="speed">0</b></span><div class="bar" id="speedwrap"><div id="speedbar"></div><i></i><i></i><i></i></div></div>
+    </div>
+    <div id="crosshair"><span class="h"></span><span class="v"></span></div>
+    <div id="leadret"></div>
+    <div id="markers"></div>
+    <div id="banner"></div>
+    <div id="warning"></div>
+    <div id="vignette"></div>
+  </div>
+
+  <div id="touch" class="hidden">
+    <div id="stickzone"><div id="stickbase"><div id="stickknob"></div></div></div>
+    <button id="btn-boost" class="tbtn">BOOST</button>
+    <button id="btn-recenter" class="tbtn round" aria-label="Recenter tilt">&#10227;</button>
+    <button id="btn-quit" class="tbtn round quit" aria-label="Quit to title">&#10005;</button>
+    <button id="btn-mute" class="tbtn round mute" aria-label="Mute">&#9835;</button>
+    <button id="btn-fire" class="tbtn fire">FIRE</button>
+  </div>
+  <div id="mute" class="pill hidden">Muted &middot; M</div>
+
+  <div id="title" class="screen">
+    <div class="intro">
+      <p class="tag">Outlast the bandits over the Coral Isles.</p>
+      <p class="press" id="starthint">PRESS ENTER TO FLY</p>
+      <div class="quick" id="controlshint">
+        <div><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd><span>fly</span></div>
+        <div><kbd>Space</kbd><span>fire</span></div>
+        <div><kbd>Shift</kbd><span>boost</span></div>
+        <button id="btn-help" aria-label="All controls">?</button>
+      </div>
+      <p class="mobilehint">Tilt to steer, tap FIRE. Hold it landscape.</p>
+      <p class="best">Best <span id="best">0</span> &middot; <button id="btn-track" aria-label="Switch theme">&#9835; <span>Dogfight</span></button></p>
+    </div>
+  </div>
+
+  <div id="help" class="screen hidden">
+    <div class="card help">
+      <h2>How to fly</h2>
+      <div class="controls">
+        <div><kbd>&uarr;</kbd><kbd>&darr;</kbd><em>/</em><kbd>W</kbd><kbd>S</kbd><span>pitch</span></div>
+        <div><kbd>&larr;</kbd><kbd>&rarr;</kbd><em>/</em><kbd>A</kbd><kbd>D</kbd><span>roll &amp; turn</span></div>
+        <div><kbd>Q</kbd><kbd>E</kbd><span>rudder</span></div>
+        <div><kbd>Space</kbd><span>fire</span></div>
+        <div><kbd>Shift</kbd><span>boost</span></div>
+        <div><kbd>Ctrl</kbd><span>brake</span></div>
+        <div><kbd>I</kbd><span>invert pitch</span></div>
+        <div><kbd>C</kbd><span>recenter tilt</span></div>
+        <div><kbd>Esc</kbd><span>quit to title</span></div>
+        <div><kbd>M</kbd><span>mute</span></div>
+      </div>
+      <p class="note">Bandits arrive through a portal each wave and come in bigger packs as you go. Quick kills chain into
+        combos. Stay inside the grid walls: outside them a ten-second countdown drains your hull.</p>
+      <p class="note">On a phone, tilt like a steering wheel to roll and tip the top edge toward you to climb.</p>
+      <button id="btn-help-close">Got it</button>
+    </div>
+  </div>
+
+  <div id="gameover" class="screen hidden">
+    <div class="card">
+      <h1 class="small">SHOT <span>DOWN</span></h1>
+      <p class="result">Score <b id="finalscore">0</b> · Wave <b id="finalwave">1</b> · <b id="finalkills">0</b> kills</p>
+      <p id="newbest" class="hidden">NEW BEST!</p>
+      <p class="press" id="gohint">PRESS ENTER TO FLY AGAIN</p>
+    </div>
+  </div>
+
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>
