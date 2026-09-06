@@ -22,8 +22,10 @@ phone, open it in landscape and tilt to steer.
 Phones: tilt like a steering wheel to roll, tip the top edge toward you to climb, hold FIRE and BOOST. The `?` on the
 title screen has the full list.
 
-Bandits arrive through a portal each wave and come in bigger packs. Quick kills chain into combos. Stay inside the
-grid walls: outside them a ten-second countdown drains your hull.
+Bandits arrive through a portal each wave and come in bigger packs. They hunt in passes: after a pass, or after
+sitting on your tail for a few seconds, a bandit breaks off and cruises about before coming back, and only part of
+the pack hunts you at once, so there is always one showing you its tail. Quick kills chain into combos. Stay inside
+the grid walls: outside them a ten-second countdown drains your hull.
 
 ## Run it yourself
 
@@ -49,6 +51,11 @@ note is generated in code.
   palm fronds (with wind and downwash), glow (tracers, flames, the sun) and soft (prop discs, splash rings,
   waterfalls). A plane is a table of 30-odd boxes placed under its matrix each frame, control surfaces, flexing
   wingtips, retracting gear and pilot included.
+- **Bandits.** Each has a small state machine: pursue with a lead point, a close pass, break away, then a spell of
+  wandering between loose waypoints in which it is not looking for you. Patience, leash and reaction sharpen with
+  the wave, and a per-wave cap on how many may hunt at once is shared by the pack. It is tuned with a headless
+  profiler (`__aiProfile` in dev builds) that flies a scripted average pilot through a wave and reports how much of
+  the time you are hunted, tailed, or have a shot.
 - **Feel.** Fixed 120 Hz simulation, hit-stop and distance-scaled shake, a camera that lags through hard turns and
   kicks with the guns, a slow-motion orbit on the last kill of a wave, wreckage that tumbles and smokes, damage
   states, sea spray and dust on low passes, birds, gulls, sheep, wolves, villagers, and a title built from riveted
@@ -71,7 +78,7 @@ note is generated in code.
 | `src/hud.js`, `src/title.js` | DOM HUD and screens, the voxel title |
 | `src/audio.js`, `src/music.js`, `src/scores.js`, `src/ks.worklet.js` | sound effects, the music engine, the two themes |
 | `src/input.js`, `src/touch.js` | keyboard, tilt and touch controls |
-| `src/dev.js` | headless test and benchmark hooks (dev builds only) |
+| `src/dev.js` | headless test, benchmark and AI-profile hooks (dev builds only) |
 
 ## License
 

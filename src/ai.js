@@ -5,21 +5,71 @@ const tv = new THREE.Vector3(), aim = new THREE.Vector3(), ahead = new THREE.Vec
 const clamp = THREE.MathUtils.clamp;
 const rnd = (a, b) => a + Math.random() * (b - a);
 
+/**
+ * A bandit's brain. Bandits hunt in passes rather than sitting on your tail: a pursuit with a patience limit, a
+ * close pass, a break-away, then a spell of wandering in which the bandit cruises about the arena without looking
+ * for you, before it comes back for another pass. A bandit that has lost you behind it beyond its leash gives up
+ * and wanders too. The pack shares a hunting cap (`pack.max`): the rest of a big wave loiters until a slot frees.
+ * Skill (0.35..1) lengthens the patience, shortens the wandering and sharpens the reactions, so wave 1 is loose and
+ * wave 10 is tight. Measured with `__aiProfile` in dev.js.
+ */
 export class EnemyBrain {
   constructor(aircraft, skill) {
     this.ac = aircraft;
     this.skill = skill;                // 0.35 .. 1
     this.state = 'pursue';
+    this.next = 'pursue';              // where a breakaway, an evade or a return leads afterwards
     this.timer = 0;
+    this.engaged = 0;                  // seconds into the current pursuit
+    this.tailing = 0;                  // seconds spent sitting close behind you
+    this.patience = this.rollPatience();
+    this.tailPatience = this.rollTailPatience();
+    this.leash = 300 + skill * 220;    // beyond this, a bandit that has lost you behind it gives up for a while
     this.evadeRoll = 1; this.evadePitch = 0.8;
     this.wander = new THREE.Vector3();
     this.wanderTimer = 0;
+    this.goal = new THREE.Vector3();   // where a wandering bandit is heading
+    this.goalTimer = 0;
     this.checkTimer = rnd(0, 0.5);
     this.fireBurst = 0; this.fireGap = 0;
     this.wantsFire = false;
   }
 
-  update(dt, player) {
+  rollPatience() { return rnd(4, 7) * (0.7 + this.skill * 0.6); }
+  rollTailPatience() { return rnd(2, 3.5) + this.skill * 2; }
+
+  /** Off for a cruise: a few seconds of not hunting, shorter the better the pilot. */
+  startWander(player) {
+    this.state = 'wander';
+    this.timer = rnd(3.5, 6.5) * (1.35 - this.skill * 0.7);
+    this.patience = this.rollPatience(); this.tailPatience = this.rollTailPatience();
+    this.pickGoal(player);
+  }
+
+  /** A loose waypoint on this bandit's side of you, a few hundred units out, at a safe height inside the walls. */
+  pickGoal(player) {
+    const ac = this.ac, g = this.goal;
+    const bearing = Math.atan2(ac.pos.x - player.pos.x, ac.pos.z - player.pos.z) + rnd(-1.2, 1.2), r = rnd(240, 460);
+    g.set(player.pos.x + Math.sin(bearing) * r, 0, player.pos.z + Math.cos(bearing) * r);
+    const lim = BOUNDS.half - 220;
+    g.x = clamp(g.x, -lim, lim); g.z = clamp(g.z, -lim, lim);
+    g.y = clamp(player.pos.y + rnd(-50, 70), groundAt(g.x, g.z) + 80, BOUNDS.ceiling - 150);
+    this.goalTimer = rnd(2.2, 3.6);
+  }
+
+  /** Breaks off with a hard rolling pull, then goes on to `next`. */
+  breakaway(next) {
+    this.state = 'breakaway'; this.next = next; this.timer = rnd(1.4, 2.2);
+    this.evadeRoll = Math.random() < 0.5 ? -1 : 1;
+  }
+
+  evade(next) {
+    this.state = 'evade'; this.next = next; this.timer = rnd(1.2, 2.4);
+    this.evadeRoll = Math.random() < 0.5 ? -1 : 1; this.evadePitch = rnd(0.5, 1);
+  }
+
+  /** `pack` is shared by the wave: how many bandits are pursuing right now and how many may. */
+  update(dt, player, pack) {
     const ac = this.ac, inp = ac.input;
     this.timer -= dt; this.wanderTimer -= dt; this.checkTimer -= dt;
     if (this.wanderTimer <= 0) {
@@ -43,21 +93,36 @@ export class EnemyBrain {
     let dist = ac.pos.distanceTo(player.pos);
     const toPlayer = ac.toLocal(player.pos, tv);
     const playerBehind = toPlayer.z < 0;
+    const threatened = () => playerBehind && dist < 230 && player.forward.dot(tv.copy(ac.pos).sub(player.pos).normalize()) > 0.92;
 
     // --- state transitions
     if (this.state === 'pursue') {
+      this.engaged += dt;
+      this.tailing = dist < 130 && toPlayer.z > 0 ? this.tailing + dt : 0;
       if (!player.alive) { this.state = 'patrol'; this.timer = 2; }
-      else if (dist < 42 && toPlayer.z > 0) { this.state = 'breakaway'; this.timer = rnd(1.4, 2.2); this.evadeRoll = Math.random() < 0.5 ? -1 : 1; }
+      else if (dist < 42 && toPlayer.z > 0) this.breakaway('wander');                                  // the pass
+      else if (this.tailing > this.tailPatience) this.breakaway('wander');                            // sat on you long enough
+      else if (this.engaged > this.patience) { if (dist < 160) this.breakaway('wander'); else this.startWander(player); }
+      else if (dist > this.leash && playerBehind && this.engaged > 1) this.startWander(player);      // lost you: give up for now
       else if (this.checkTimer <= 0) {
         this.checkTimer = 0.45;
-        const threatened = playerBehind && dist < 230 && player.forward.dot(tv.copy(ac.pos).sub(player.pos).normalize()) > 0.92;
-        if ((ac.hitFlash > 0 && Math.random() < 0.35 + this.skill * 0.4) || (threatened && Math.random() < this.skill * 0.6)) {
-          this.state = 'evade'; this.timer = rnd(1.2, 2.4);
-          this.evadeRoll = Math.random() < 0.5 ? -1 : 1; this.evadePitch = rnd(0.5, 1);
-        }
+        if (pack.hunting > pack.max && this.engaged > 1.5 && dist > 200) { pack.hunting--; this.startWander(player); }   // too many on you: hand over
+        else if ((ac.hitFlash > 0 && Math.random() < 0.35 + this.skill * 0.4) || (threatened() && Math.random() < this.skill * this.skill * 0.6)) this.evade('pursue');
+      }
+    } else if (this.state === 'wander') {
+      if (!player.alive) { this.state = 'patrol'; this.timer = 2; }
+      else if (this.timer <= 0) {
+        if (pack.hunting < pack.max) { this.state = 'pursue'; this.engaged = 0; this.tailing = 0; pack.hunting++; }
+        else this.timer = rnd(0.4, 1.0);   // the pack is busy: keep cruising and ask again shortly
+      } else if (this.checkTimer <= 0) {
+        this.checkTimer = 0.45;
+        // a cruising bandit is slow to notice you on its tail, but a bullet wakes it up and it fights back
+        if ((ac.hitFlash > 0 && Math.random() < 0.5 + this.skill * 0.4) || (threatened() && Math.random() < this.skill * 0.25)) { this.evade('pursue'); this.engaged = 0; }
       }
     } else if (this.timer <= 0) {
-      this.state = player.alive ? 'pursue' : 'patrol';
+      if (!player.alive) { this.state = 'patrol'; this.timer = 2; }
+      else if (this.next === 'wander') this.startWander(player);
+      else { this.state = 'pursue'; this.tailing = 0; pack.hunting++; }
     }
 
     // --- behaviours
@@ -76,6 +141,13 @@ export class EnemyBrain {
         if (this.fireBurst > 0) { this.fireBurst -= dt; this.wantsFire = true; }
         else if (this.fireGap <= 0) { this.fireBurst = rnd(0.35, 0.8) * (0.6 + this.skill); this.fireGap = rnd(0.8, 1.8) * (1.6 - this.skill); }
       } else { this.fireBurst = 0; }
+    } else if (this.state === 'wander') {
+      // an easy cruise between loose waypoints: predictable, catchable, and not looking for you
+      this.goalTimer -= dt;
+      if (this.goalTimer <= 0) this.pickGoal(player);
+      aim.copy(this.goal).add(this.wander);
+      this.steerTo(aim, 0.45);
+      inp.throttle = -0.15;
     } else if (this.state === 'evade') {
       inp.roll = this.evadeRoll; inp.pitch = this.evadePitch; inp.throttle = 1;
     } else if (this.state === 'breakaway') {

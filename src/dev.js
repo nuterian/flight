@@ -1,5 +1,11 @@
-// Headless test hooks: step the simulation deterministically and render a frame even when the tab is hidden.
+// Headless test hooks: step the simulation deterministically, render a frame even when the tab is hidden, and
+// measure the bandits against a scripted pilot (__aiProfile) so AI changes are tuned by numbers, not by feel.
+import * as THREE from 'three/webgpu';
 import { Music } from './music.js';
+import { EnemyBrain } from './ai.js';
+import { Aircraft } from './aircraft.js';
+import { BULLET_SPEED } from './bullets.js';
+import { groundAt, BOUNDS } from './terrain.js';
 
 export function attachDevHooks({ game, input, world, camera, pipeline, renderer, boxes, useTitleLens, title, music, menuMusic }) {
   const frame = (seconds) => {
@@ -67,6 +73,113 @@ export function attachDevHooks({ game, input, world, camera, pipeline, renderer,
     game.enemies.forEach((e, i) => { if (!e.ac.alive) return; e.ac.pos.copy(p.pos).addScaledVector(p.forward, 120 + i * 40).add({ x: (i - 3) * 30, y: (i % 2) * 20 - 10, z: 0 }); e.ac.quat.copy(p.quat); e.ac.updateAxes(); });
     window.__step(1.5, { pitch: 0.15, roll: 0.35, yaw: 0, throttle: 1, fire: true });
     Math.random = realRandom;
+  };
+  // ---- AI profile: a scripted "average" pilot flies a wave so the bandits' behaviour can be measured, not felt -------
+  const clampN = THREE.MathUtils.clamp;
+  const ptv = new THREE.Vector3(), paim = new THREE.Vector3(), pdir = new THREE.Vector3();
+  const pilotBrain = new EnemyBrain(game.player, 0.55);   // borrows the bandits' steering maths; the skill sets its agility
+  let pTarget = null, pThink = 0;
+  /** Reacts every 0.3 s, turns toward the nearest bandit's lead point, boosts to close, brakes before ramming, fires
+   *  inside a 4 degree cone within 380 units, pulls up off the ground and turns back from the walls. Writes the shared
+   *  Input the way the keyboard would. */
+  const flyAverage = (dt) => {
+    const p = game.player, inp = p.input;
+    pThink -= dt;
+    if (pThink <= 0 || !pTarget || !pTarget.alive) {
+      pThink = 0.3; pTarget = null;
+      let best = Infinity;
+      for (const e of game.enemies) { if (!e.ac.alive) continue; const d = e.ac.pos.distanceToSquared(p.pos); if (d < best) { best = d; pTarget = e.ac; } }
+    }
+    let pitch = 0.03, roll = 0, yaw = 0, throttle = 0, fire = false;
+    ptv.copy(p.pos).addScaledVector(p.forward, 80);
+    const edge = Math.max(Math.abs(p.pos.x), Math.abs(p.pos.z));
+    if (p.pos.y - groundAt(p.pos.x, p.pos.z) < 35 || ptv.y - groundAt(ptv.x, ptv.z) < 25) {
+      pitch = 1; roll = clampN(p.right.y * 3, -1, 1); throttle = 1;
+    } else if (edge > BOUNDS.half - 150 || p.pos.y > BOUNDS.ceiling - 60) {
+      pilotBrain.steerTo(paim.set(0, 220, 0), 0.7); pitch = inp.pitch; roll = inp.roll; yaw = inp.yaw;
+    } else if (pTarget) {
+      const dist = p.pos.distanceTo(pTarget.pos);
+      paim.copy(pTarget.pos).addScaledVector(pTarget.velocity, dist / BULLET_SPEED);
+      pilotBrain.steerTo(paim, 0.7);
+      pitch = inp.pitch; roll = inp.roll; yaw = inp.yaw;
+      const l = p.toLocal(paim, ptv), off = Math.atan2(Math.hypot(l.x, l.y), l.z);
+      fire = dist < 380 && off < 0.07;
+      throttle = dist > 240 ? 1 : (dist < 60 && l.z > 0 ? -1 : 0);
+    }
+    input.pitch = pitch; input.roll = roll; input.yaw = yaw; input.throttle = throttle; input.fire = fire;
+  };
+  window.__flyAverage = flyAverage;   // for staging: `__flyAverage(1/120); __game.update(1/120)` per step
+  const profileOnce = (wave, seconds, s) => {
+    seed = s; Math.random = seeded;
+    const origDamage = Aircraft.prototype.damage, origFire = game.fire;
+    const n = { pShots: 0, eShots: 0, pHits: 0, eHits: 0, taken: 0 };
+    Aircraft.prototype.damage = function (amt) { if (this.team === 1) n.pHits++; else { n.eHits++; n.taken += amt; } return origDamage.call(this, amt); };
+    game.fire = function (ac, ...rest) { if (ac.gunTimer <= 0) { if (ac === game.player) n.pShots++; else n.eShots++; } return origFire.call(this, ac, ...rest); };
+    game.start();
+    for (let i = 1; i < wave; i++) game.nextWave();
+    pTarget = null; pThink = 0;
+    const states = {}, windows = [], DT = 1 / 120, startWave = game.wave;
+    let aliveT = 0, banditT = 0, huntedT = 0, tailT = 0, shotT = 0, freeT = 0, freeRun = 0, t = 0, cleared = -1;
+    for (; t < seconds && game.state === 'playing'; t += DT) {
+      flyAverage(DT);
+      game.update(DT);
+      if (game.wave > startWave && cleared < 0) cleared = t;
+      const p = game.player;
+      let alive = 0, hunted = false, tail = false, shot = false, pursuing = false;
+      for (const e of game.enemies) {
+        const ac = e.ac; if (!ac.alive) continue;
+        alive++;
+        const st = e.brain.state; states[st] = (states[st] || 0) + DT;
+        if (st === 'pursue') pursuing = true;
+        const dist = ac.pos.distanceTo(p.pos);
+        const nose = ac.forward.dot(pdir.copy(p.pos).sub(ac.pos).normalize());   // 1 = the bandit points straight at you
+        const l = p.toLocal(ac.pos, ptv);
+        const ahead = l.z > 0 && Math.atan2(Math.hypot(l.x, l.y), l.z) < 0.6;
+        if (st === 'pursue' && dist < 500 && nose > 0.86) hunted = true;
+        if (l.z < 0 && dist < 260 && nose > 0.94) tail = true;
+        if (ahead && dist < 420 && nose < 0.35) shot = true;
+      }
+      if (alive === 0) { if (freeRun > 0) { windows.push(freeRun); freeRun = 0; } continue; }
+      aliveT += DT; banditT += alive * DT;
+      if (hunted) huntedT += DT;
+      if (tail) tailT += DT;
+      if (shot) shotT += DT;
+      if (!pursuing) { freeT += DT; freeRun += DT; } else if (freeRun > 0) { windows.push(freeRun); freeRun = 0; }
+    }
+    if (freeRun > 0) windows.push(freeRun);
+    Aircraft.prototype.damage = origDamage; game.fire = origFire;
+    const kills = game.kills, health = game.player.health, died = game.state !== 'playing';
+    game.abort();
+    Math.random = realRandom;
+    const f = (x) => +x.toFixed(3);
+    const stateFrac = {}; for (const k in states) stateFrac[k] = f(states[k] / (banditT || 1));
+    return {
+      wave, seconds: f(t), died, cleared: cleared < 0 ? null : f(cleared), kills, healthLeft: Math.round(health), damageTaken: Math.round(n.taken),
+      shots: n.pShots, hits: n.pHits, accuracy: f(n.pHits / (n.pShots || 1)), banditShots: n.eShots, banditHits: n.eHits,
+      // fractions of the time at least one bandit was alive
+      huntedFrac: f(huntedT / (aliveT || 1)),   // a pursuing bandit had its nose on you within 500
+      onTailFrac: f(tailT / (aliveT || 1)),     // one sat behind you within 260, lined up
+      shotFrac: f(shotT / (aliveT || 1)),       // one was ahead of you within 420 showing you its tail or side
+      freeFrac: f(freeT / (aliveT || 1)),       // nobody was pursuing you at all
+      freeWindows: windows.length, freeMean: f(windows.reduce((a, b) => a + b, 0) / (windows.length || 1)), freeMax: f(windows.reduce((a, b) => Math.max(a, b), 0)),
+      states: stateFrac,
+    };
+  };
+  /** Flies `runs` seeded fights from `wave` with the scripted pilot and averages the measurements (per-run in `runs`). */
+  window.__aiProfile = ({ wave = 1, seconds = 60, runs = 3, seedBase = 4242 } = {}) => {
+    const rs = [];
+    try { for (let r = 0; r < runs; r++) rs.push(profileOnce(wave, seconds, seedBase + r * 7919)); }
+    finally { Math.random = realRandom; }
+    const avg = {};
+    for (const k in rs[0]) {
+      const vals = rs.map((x) => x[k]);
+      if (vals.every((v) => typeof v === 'number' || v === null)) { const nums = vals.filter((v) => v !== null); avg[k] = nums.length ? +(nums.reduce((a, b) => a + b, 0) / nums.length).toFixed(3) : null; }
+      else if (vals.every((v) => typeof v === 'boolean')) avg[k] = +(vals.filter(Boolean).length / vals.length).toFixed(2);
+      else if (vals.every((v) => v && typeof v === 'object')) { avg[k] = {}; for (const v of vals) for (const s in v) avg[k][s] = +((avg[k][s] || 0) + v[s] / vals.length).toFixed(3); }
+      else avg[k] = vals[0];
+    }
+    avg.runs = rs;
+    return avg;
   };
   /**
    * Throughput bench. Frames are submitted back to back with the animation loop paused and randomness seeded:

@@ -32,6 +32,7 @@ export class Game {
     this.enemyBullets = new BulletPool(glow, 260, 0xff5a3c);
     this.trails = new Trails(scene, (MAX_ENEMIES + 1) * 2);
 
+    this.pack = { hunting: 0, max: 1 };   // how many bandits are hunting the player right now, and how many may
     this.player = new Aircraft(new Plane(batches, SCHEMES.player), PLAYER_STATS, 0);
     this.player.trails = [this.trails.ribbon(), this.trails.ribbon()];
 
@@ -90,6 +91,9 @@ export class Game {
     const count = Math.min(MAX_ENEMIES, 1 + Math.ceil(this.wave * 0.9));
     const skill = Math.min(1, 0.32 + this.wave * 0.085);
     this.waveSize = count;
+    // Only part of the pack hunts you at once (1 on the first waves, one more every three); the rest cruise about
+    // until a slot frees, so there is always a bandit showing you its tail and never a whole wave on yours.
+    this.pack.max = Math.min(count, 1 + Math.floor(this.wave / 3));
     this.hud.banner(`WAVE ${this.wave}`);
     // A portal opens ahead-ish of the player and the bandits fly out of it one after another, head-on.
     const baseAngle = Math.atan2(this.player.forward.x, this.player.forward.z);
@@ -312,11 +316,14 @@ export class Game {
     if (this.state === 'playing') this.spawnPending(dt);
     this.portal.update(dt);
     let alive = 0;
+    const pack = this.pack;
+    pack.hunting = 0;
+    for (const e of this.enemies) if (e.ac.alive && e.brain.state === 'pursue') pack.hunting++;
     for (const e of this.enemies) {
       const ac = e.ac;
       if (!ac.alive) continue;
       alive++;
-      e.brain.update(dt, p);
+      e.brain.update(dt, p, pack);
       ac.lookTarget = p.alive ? p.pos : null;
       ac.update(dt);
       this.shedTip(ac);
