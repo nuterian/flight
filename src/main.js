@@ -1,5 +1,5 @@
 import * as THREE from 'three/webgpu';
-import { pass, mrt, output, emissive, vec3, vec4, float, screenUV, smoothstep, mix, luminance, color, uniform, Fn, If, Loop } from 'three/tsl';
+import { pass, mrt, output, emissive, vec2, vec3, vec4, float, screenUV, smoothstep, mix, luminance, color, uniform, Fn, If, Loop, length } from 'three/tsl';
 import { bloom } from 'three/addons/tsl/display/BloomNode.js';
 import { dof } from 'three/addons/tsl/display/DepthOfFieldNode.js';
 import { createWorld } from './world.js';
@@ -62,6 +62,21 @@ async function boot() {
     });
     return col;
   })();
+  // Motion smear: the scene colour averaged along the direction each pixel moved during the frame (a sideways shift
+  // for yaw and pitch, a swirl about the centre for roll, a radial stretch for forward travel), from the camera's
+  // motion measured in world.update. Six taps, symmetric so nothing lags, never more than ~2% of the screen.
+  const sm = world.smear;
+  const smeared = mobile ? scenePassColor : Fn(() => {
+    const d = screenUV.sub(0.5).mul(vec2(sm.aspect, 1));
+    let off = sm.shift.add(vec2(d.y.negate(), d.x).mul(sm.roll)).add(d.mul(sm.zoom));
+    off = off.mul(float(0.018).div(length(off).add(1e-5)).min(1));
+    off = off.mul(smoothstep(0.05, 0.14, length(screenUV.sub(sm.focus).mul(vec2(sm.aspect, 1)))));   // your own plane stays crisp
+    off = vec2(off.x.div(sm.aspect), off.y);
+    const col = vec3(0).toVar();
+    const taps = 6;
+    for (let i = 0; i < taps; i++) col.addAssign(scenePassColor.sample(screenUV.add(off.mul(i / (taps - 1) - 0.5))).rgb);
+    return vec4(col.div(taps), 1);
+  })();
   // Ambient occlusion is baked into the terrain vertex colors (see world.js) rather than computed per screen pixel:
   // screen-space AO showed a fixed noise lattice on the flat water while moving.
   // Filmic grade: cool the deep shadows only, lift saturation a touch, gentle vignette.
@@ -73,7 +88,7 @@ async function boot() {
     const vignette = smoothstep(0.45, 1.25, screenUV.sub(0.5).length()).mul(0.22);
     return vec4(rgb.mul(float(1).sub(vignette)), 1);
   };
-  const playGraph = grade(scenePassColor.add(bloomPass).add(vec4(shafts, 0)));
+  const playGraph = grade(smeared.add(bloomPass).add(vec4(shafts, 0)));
   // Title screen only: a shallow depth of field on the cinematic orbit. Off in play, never on mobile.
   const titleGraph = mobile ? null : grade(dof(scenePassColor.add(bloomPass), scenePass.getViewZNode(), uniform(420), uniform(260), 2.4).add(vec4(shafts, 0)));
   const pipeline = new THREE.RenderPipeline(renderer);

@@ -1,7 +1,7 @@
 import * as THREE from 'three/webgpu';
 import {
   color, positionLocal, positionWorld, normalize, mix, smoothstep, dot, float, vec2, vec3, attribute, time, sin, cos,
-  saturate, pow, uniform, fog, rangeFogFactor, instanceIndex, hash, cameraPosition, reflect, transformNormalToView, mx_noise_float, reflector, uv, abs, fract, max as tslMax, min as tslMin, length, exp, floor, select, normalWorld, vertexColor, step, dot as tslDot, luminance,
+  saturate, pow, uniform, fog, rangeFogFactor, instanceIndex, hash, cameraPosition, reflect, transformNormalToView, mx_noise_float, reflector, uv, abs, fract, max as tslMax, min as tslMin, length, exp, floor, select, normalWorld, vertexColor, step, dot as tslDot, luminance, positionView,
 } from 'three/tsl';
 import { ensureGrid, heightAt, levelAtCell, cellKind, cellWater, cellTop, levelTop, waterfalls, isSeaAt, KIND, N as HALF_CELLS, CELL, BOUNDS } from './terrain.js';
 import { Boxes, local, softParam, STRIP } from './boxes.js';
@@ -808,7 +808,13 @@ export function createWorld(scene, { mobile, lit, glow, soft }) {
   const hemi = new THREE.HemisphereLight(0x9fd0ff, 0xe4c58c, 1.25);
   scene.add(hemi);
 
-  scene.fogNode = fog(color(PALETTE.fogColor), rangeFogFactor(1500, 4600));
+  // Two fogs in one: the far fog that swallows the horizon, and under it a faint haze that starts a couple of
+  // hundred units out and reaches a sixth of the way to sky colour by 2600, denser near sea level than up in the
+  // mountains, so distant isles sit back in the air instead of cutting out of it.
+  const farFog = rangeFogFactor(1500, 4600);
+  const haze = smoothstep(float(140), float(2600), positionView.z.negate()).mul(0.16)
+    .mul(mix(float(1), float(0.5), smoothstep(float(0), float(320), positionWorld.y)));
+  scene.fogNode = fog(color(PALETTE.fogColor), farFog.add(haze.mul(float(1).sub(farFog))));
 
   const terrain = buildTerrain();
   const seafloor = buildSeafloor();
@@ -828,6 +834,11 @@ export function createWorld(scene, { mobile, lit, glow, soft }) {
   const sunNdc = new THREE.Vector3(), tmpDir = new THREE.Vector3();
   const shadowFocus = new THREE.Vector3(), sunM = new THREE.Matrix4(), sunQ = new THREE.Quaternion(), sunS = new THREE.Vector3(150, 150, 150), sunP = new THREE.Vector3(), sunE = new THREE.Euler();
   let sunSpin = 0;
+  // Motion smear for the post pass: how far the camera turned (yaw, pitch, roll) and travelled forward since the
+  // last displayed frame, as screen-space blur vectors. A 180 degree shutter, softened: a hint, not a streak.
+  const smear = { shift: uniform(new THREE.Vector2()), roll: uniform(0), zoom: uniform(0), aspect: uniform(1), focus: uniform(new THREE.Vector2(-10, -10)) };
+  const prevCamQ = new THREE.Quaternion(), prevCamP = new THREE.Vector3(), dq = new THREE.Quaternion(), camF = new THREE.Vector3();
+  let smearReady = false;
   const lightRight = new THREE.Vector3().crossVectors(new THREE.Vector3(0, 1, 0), SUN_DIR).normalize();
   const lightUp = new THREE.Vector3().crossVectors(SUN_DIR, lightRight).normalize();
   const update = (dt, t, focus, camera, speed = 0) => {
@@ -843,6 +854,19 @@ export function createWorld(scene, { mobile, lit, glow, soft }) {
     const edge = Math.max(Math.abs(sunNdc.x), Math.abs(sunNdc.y));
     sunScreen.uv.value.set((sunNdc.x + 1) * 0.5, (sunNdc.y + 1) * 0.5);
     sunScreen.strength.value = behind ? 0 : 1 - THREE.MathUtils.smoothstep(edge, 1.0, 1.7);
+    if (smearReady && dt > 0 && dt < 0.1) {
+      dq.copy(prevCamQ).invert().multiply(camera.quaternion);   // the turn since last frame, in the old camera's frame
+      const k = 0.5 / Math.tan(THREE.MathUtils.degToRad(camera.fov) * 0.5) * 0.35;   // radians -> screen fraction, shuttered
+      smear.shift.value.set(2 * dq.y * k, 2 * dq.x * k);
+      smear.roll.value = 2 * dq.z * 0.35;
+      camF.set(0, 0, -1).applyQuaternion(camera.quaternion);
+      smear.zoom.value = tmpDir.copy(camera.position).sub(prevCamP).dot(camF) / 140 * 0.35;   // travel against ~140 units of scenery
+    } else { smear.shift.value.set(0, 0); smear.roll.value = 0; smear.zoom.value = 0; }   // a cut or a stall: no smear
+    prevCamQ.copy(camera.quaternion); prevCamP.copy(camera.position); smearReady = true;
+    smear.aspect.value = camera.aspect;
+    // the plane you are flying holds still in the chase view, so the smear is masked out around it
+    if (speed > 0) { tmpDir.copy(focus).project(camera); smear.focus.value.set((tmpDir.x + 1) * 0.5, (tmpDir.y + 1) * 0.5); }
+    else smear.focus.value.set(-10, -10);
     // Snap the shadow frustum to whole shadow-map texels in light space so shadow edges don't crawl as the player moves.
     const texel = (2 * ext) / sm.mapSize.x;
     const dr = shadowFocus.copy(focus).dot(lightRight), du = focus.dot(lightUp);
@@ -857,5 +881,5 @@ export function createWorld(scene, { mobile, lit, glow, soft }) {
 
   /** Distance to the nearest big waterfall (for its rumble). */
   const nearestFall = (pos) => { let d = Infinity; for (const f of bigFalls) d = Math.min(d, Math.hypot(pos.x - f.x, pos.y - f.y, pos.z - f.z)); return d; };
-  return { update, setDanger: bounds.setDanger, props, nearestFall, bigFalls, sunScreen, clouds: clouds.clouds, brushPalms: props.brushPalms };
+  return { update, setDanger: bounds.setDanger, props, nearestFall, bigFalls, sunScreen, smear, clouds: clouds.clouds, brushPalms: props.brushPalms };
 }
