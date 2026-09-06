@@ -816,7 +816,7 @@ export function createWorld(scene, { mobile, lit, glow, soft }) {
   sun.castShadow = true;
   const sm = sun.shadow;
   sm.mapSize.set(mobile ? 1024 : 2048, mobile ? 1024 : 2048);
-  const ext = 340;
+  const ext = 430;   // half-width of the shadow frustum; it is centred ahead of the plane, where you look
   sm.camera.left = -ext; sm.camera.right = ext; sm.camera.top = ext; sm.camera.bottom = -ext;
   sm.camera.near = 10; sm.camera.far = 1600;
   sm.bias = -0.0003;
@@ -915,9 +915,13 @@ export function createWorld(scene, { mobile, lit, glow, soft }) {
     } else { smear.shift.value.set(0, 0); smear.roll.value = 0; smear.trans.value.set(0, 0, 0); }   // a cut, a stall, the title
     prevCamQ.copy(camera.quaternion); prevCamP.copy(camera.position); smearReady = true;
     smear.fy.value = fy; smear.aspect.value = camera.aspect;
-    // Snap the shadow frustum to whole shadow-map texels in light space so shadow edges don't crawl as the player moves.
+    // The frustum sits 220 units ahead of the plane along the camera's heading, so shadows reach 650 units out in
+    // front and only 210 behind, and it snaps to whole shadow-map texels in light space so edges don't crawl.
+    tmpDir.set(0, 0, -1).applyQuaternion(camera.quaternion); tmpDir.y = 0;
+    if (tmpDir.lengthSq() > 1e-4) tmpDir.normalize();
+    shadowFocus.copy(focus).addScaledVector(tmpDir, 220);
     const texel = (2 * ext) / sm.mapSize.x;
-    const dr = shadowFocus.copy(focus).dot(lightRight), du = focus.dot(lightUp);
+    const dr = shadowFocus.dot(lightRight), du = shadowFocus.dot(lightUp);
     shadowFocus.addScaledVector(lightRight, -(dr - Math.round(dr / texel) * texel)).addScaledVector(lightUp, -(du - Math.round(du / texel) * texel));
     // The light sits high enough that the clouds (420..530 up) fall inside its frustum, so their shadows sweep the
     // sea and land below. The depth range is unchanged, so shadow precision is too.

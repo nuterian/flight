@@ -11,7 +11,7 @@ export class Trails {
     for (let r = 0; r < ribbons; r++) {
       const points = [];
       for (let i = 0; i < n; i++) points.push({ p: new THREE.Vector3(), side: new THREE.Vector3(0, 1, 0), a: 0 });
-      this.ribbons.push({ points, timer: 0 });
+      this.ribbons.push({ points, timer: 0, fresh: true });
     }
     this.pos = new Float32Array(ribbons * n * 6);
     this.alpha = new Float32Array(ribbons * n * 2);
@@ -32,11 +32,14 @@ export class Trails {
 
   /** Claims a ribbon; returns its index. */
   ribbon() { return this.next++; }
-  reset(r) { for (const pt of this.ribbons[r].points) pt.a = 0; }
+  /** Empties a ribbon. The next push gathers every point onto the emitter, so no strip is ever drawn from where
+   *  the ribbon used to be (or from the origin, on the first push) to where it is now. */
+  reset(r) { const rb = this.ribbons[r]; for (const pt of rb.points) pt.a = 0; rb.fresh = true; }
 
   /** Call every step with the emitter position, the strip's side vector and a 0..1 intensity. */
   push(r, dt, position, side, intensity) {
     const rb = this.ribbons[r];
+    if (rb.fresh) { rb.fresh = false; for (const pt of rb.points) { pt.p.copy(position); pt.side.copy(side); pt.a = 0; } }
     rb.timer -= dt;
     if (rb.timer <= 0) {
       rb.timer = this.sample;
