@@ -4,7 +4,7 @@
   "description": "A voxel-terraced, Pixar-lit arcade dogfighting game for the browser, built on Three.js WebGPU and TSL. Everything is procedural: no assets.",
   "private": true,
   "type": "module",
-  "license": "ISC",
+  "license": "MIT",
   "scripts": {
     "dev": "vite",
     "build": "vite build",

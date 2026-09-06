@@ -72,3 +72,7 @@ note is generated in code.
 | `src/audio.js`, `src/music.js`, `src/scores.js`, `src/ks.worklet.js` | sound effects, the music engine, the two themes |
 | `src/input.js`, `src/touch.js` | keyboard, tilt and touch controls |
 | `src/dev.js` | headless test and benchmark hooks (dev builds only) |
+
+## License
+
+MIT. See `LICENSE`.
