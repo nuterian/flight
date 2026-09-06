@@ -3,7 +3,7 @@
 A voxel-terraced, Pixar-lit arcade dogfighting game for the browser. Fly a toy propeller plane over the Coral
 Isles and survive escalating waves of AI bandits.
 
-**Play it: [nuterian.github.io/flight](https://nuterian.github.io/flight/)**
+**Play it: [jugalm.com/flight](https://jugalm.com/flight/)** (also reachable as [nuterian.github.io/flight](https://nuterian.github.io/flight/))
 
 Works in any browser with WebGPU (Chrome, Edge, Safari 26, Firefox 141+) and falls back to WebGL2 elsewhere. On a
 phone, open it in landscape and tilt to steer.
