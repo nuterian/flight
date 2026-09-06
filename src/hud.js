@@ -3,6 +3,8 @@ import { MEDALS } from './medals.js';
 
 const v = new THREE.Vector3();
 const $ = (id) => document.getElementById(id);
+/** What ended the run, as the debrief's headline. */
+const CAUSES = { shot: ['SHOT', 'DOWN'], sea: ['INTO THE', 'SEA'], terrain: ['INTO THE', 'GROUND'], zone: ['LEFT THE', 'ZONE'] };
 /** Re-adds a class so its CSS animation plays again from the start. */
 const restart = (el, cls) => { el.classList.remove(cls); void el.offsetWidth; el.classList.add(cls); };
 
@@ -12,7 +14,7 @@ export class Hud {
       hud: $('hud'), score: $('score'), wave: $('wave'), enemies: $('enemies'), health: $('health'), speed: $('speed'),
       crosshair: $('crosshair'), lead: $('leadret'), markers: $('markers'), banner: $('banner'), warning: $('warning'),
       vignette: $('vignette'), title: $('title'), gameover: $('gameover'), best: $('best'), bestwave: $('bestwave'), newbest: $('newbest'), touch: $('touch'),
-      portal: $('portalmark'), popups: $('popups'), hitarc: $('hitarc'), landmarks: $('landmarks'), dbmode: $('dbmode'), dbscore: document.querySelector('#gameover .scoreline'), dbtiles: $('dbtiles'), dblog: $('dblog'), dbmedal: $('dbmedal'), share: $('btn-share'), gohint: $('gohint'), medals: $('medals'), dailyinfo: $('dailyinfo'),
+      portal: $('portalmark'), popups: $('popups'), hitarc: $('hitarc'), landmarks: $('landmarks'), dbmode: $('dbmode'), dbtitle: $('dbtitle'), notice: $('notice'), dbscore: document.querySelector('#gameover .scoreline'), dbtiles: $('dbtiles'), dblog: $('dblog'), dbmedal: $('dbmedal'), share: $('btn-share'), gohint: $('gohint'), medals: $('medals'), dailyinfo: $('dailyinfo'),
       healthwrap: $('healthwrap'), killfeed: $('killfeed'), combo: $('combo'), mute: $('mute'), pips: $('pips'), speedbar: $('speedbar'), btnMute: $('btn-mute'),
     };
     this.pipCount = 0;
@@ -34,6 +36,7 @@ export class Hud {
   }
 
   showScreen(name) {
+    this.el.notice.classList.add('hidden');
     this.el.title.classList.toggle('hidden', name !== 'title');
     this.el.gameover.classList.toggle('hidden', name !== 'gameover');
     this.el.hud.classList.toggle('hidden', name !== 'hud');
@@ -74,6 +77,13 @@ export class Hud {
   comboOff() { this.el.combo.classList.remove('show'); }
   bump(key) { restart(this.el[key], 'bump'); }
   showMute(on) { this.el.mute.classList.toggle('hidden', !on); this.el.btnMute.classList.toggle('muted', on); }
+  /** A short line of status under the top bar, gone after a few seconds: tilt unavailable, and the like. */
+  notice(text, ms = 3500) {
+    const n = this.el.notice;
+    n.textContent = text; n.classList.remove('hidden');
+    clearTimeout(this.noticeTimer);
+    this.noticeTimer = setTimeout(() => n.classList.add('hidden'), ms);
+  }
 
   warn(msg) {
     const w = this.el.warning;
@@ -136,20 +146,26 @@ export class Hud {
     if (this.cache.vignette !== vk) { this.cache.vignette = vk; this.el.vignette.style.opacity = a.toFixed(2); }
   }
 
-  /** Project world positions into HUD elements. `portal` is the open portal's position, or null. */
-  updateOverlay(camera, player, enemies, leadPoint, locked, portal = null, landmarks = null) {
+  /** Project world positions into HUD elements. `portal` is the open portal's position, or null. `dt` ages the popups. */
+  updateOverlay(camera, player, enemies, leadPoint, locked, portal, landmarks, dt) {
     const W = innerWidth, H = innerHeight;
-    const place = (el, p) => {
+    // Pins an element to a world point. Off screen (or behind the camera) it is hidden, or with `edge` it is held at
+    // the screen's border as an arrow turned toward the point, `spin` radians past the arrow's own angle. Returns
+    // whether the point was in view.
+    const pin = (el, p, edge = false, spin = 0) => {
       v.copy(p).project(camera);
       const behind = v.z > 1;
-      if (behind || Math.abs(v.x) > 1 || Math.abs(v.y) > 1) { el.style.display = 'none'; return false; }
+      let x = behind ? -v.x : v.x, y = behind ? -v.y : v.y;
+      const inView = !behind && Math.abs(x) < 0.97 && Math.abs(y) < 0.97;
+      if (!inView && !edge) { el.style.display = 'none'; return false; }
+      if (!inView) { const k = 1 / Math.max(Math.abs(x), Math.abs(y)) / (Math.hypot(x, y) || 1); x *= k * 0.9; y *= k * 0.86; }
       el.style.display = 'block';
-      el.style.left = `${(v.x + 1) * 0.5 * W}px`;
-      el.style.top = `${(1 - v.y) * 0.5 * H}px`;
-      return true;
+      el.style.left = `${(x + 1) * 0.5 * W}px`; el.style.top = `${(1 - y) * 0.5 * H}px`;
+      if (edge) { el.classList.toggle('edge', !inView); el.style.transform = inView ? 'rotate(45deg)' : `rotate(${Math.atan2(x, y) + spin}rad)`; }
+      return inView;
     };
-    place(this.el.crosshair, v.copy(player.pos).addScaledVector(player.forward, 420));
-    if (leadPoint) { place(this.el.lead, leadPoint); this.el.lead.classList.toggle('locked', locked); } else this.el.lead.style.display = 'none';
+    pin(this.el.crosshair, v.copy(player.pos).addScaledVector(player.forward, 420));
+    if (leadPoint) { pin(this.el.lead, leadPoint); this.el.lead.classList.toggle('locked', locked); } else this.el.lead.style.display = 'none';
 
     let n = 0;
     for (const e of enemies) {
@@ -161,35 +177,16 @@ export class Hud {
         this.el.markers.appendChild(m); this.markerPool.push(m);
       }
       n++;
-      v.copy(e.pos).project(camera);
-      const behind = v.z > 1;
-      let x = v.x, y = v.y;
-      if (behind) { x = -x; y = -y; }
-      const inView = !behind && Math.abs(x) < 0.97 && Math.abs(y) < 0.97;
-      m.style.display = 'block';
-      if (inView) {
-        m.classList.remove('edge');
-        m.style.left = `${(x + 1) * 0.5 * W}px`; m.style.top = `${(1 - y) * 0.5 * H}px`;
-        m.style.transform = 'rotate(45deg)';
+      if (pin(m, e.pos, true)) {
         const dist = Math.round(e.pos.distanceTo(player.pos) * 3);
         const dEl = m.firstChild; if (dEl.textContent !== `${dist}`) dEl.textContent = `${dist}`;
-      } else {
-        m.classList.add('edge');
-        const len = Math.hypot(x, y) || 1;
-        let dx = x / len, dy = y / len;
-        const k = 1 / Math.max(Math.abs(dx), Math.abs(dy));
-        dx *= k * 0.9; dy *= k * 0.86;
-        m.style.left = `${(dx + 1) * 0.5 * W}px`; m.style.top = `${(1 - dy) * 0.5 * H}px`;
-        m.style.transform = `rotate(${Math.atan2(dx, dy)}rad)`;
       }
     }
     for (let i = n; i < this.markerPool.length; i++) this.markerPool[i].style.display = 'none';
     for (let i = this.popupsLive.length - 1; i >= 0; i--) {
       const it = this.popupsLive[i];
-      it.t += 1 / 60;
-      v.copy(it.pos).project(camera);
-      if (it.t > 1.3 || v.z > 1 || Math.abs(v.x) > 1.1 || Math.abs(v.y) > 1.1) { it.el.style.display = 'none'; this.popupPool.push(it.el); this.popupsLive.splice(i, 1); continue; }
-      it.el.style.left = `${(v.x + 1) * 0.5 * W}px`; it.el.style.top = `${(1 - v.y) * 0.5 * H}px`;
+      it.t += dt;
+      if (it.t > 1.3 || !pin(it.el, it.pos)) { it.el.style.display = 'none'; this.popupPool.push(it.el); this.popupsLive.splice(i, 1); }
     }
     // unfound landmarks within 520 units glimmer on screen; off screen they stay quiet, they are for finding
     let ln = 0;
@@ -198,29 +195,10 @@ export class Hud {
       let el = this.lmarkPool[ln];
       if (!el) { el = document.createElement('div'); el.className = 'lmark'; this.el.landmarks.appendChild(el); this.lmarkPool.push(el); }
       ln++;
-      v.copy(l.pos).project(camera);
-      if (v.z > 1 || Math.abs(v.x) > 0.97 || Math.abs(v.y) > 0.97) { el.style.display = 'none'; continue; }
-      el.style.display = 'block';
-      el.style.left = `${(v.x + 1) * 0.5 * W}px`; el.style.top = `${(1 - v.y) * 0.5 * H}px`;
+      pin(el, l.pos);
     }
     for (let i = ln; i < this.lmarkPool.length; i++) this.lmarkPool[i].style.display = 'none';
-    const pm = this.el.portal;
-    if (!portal) { pm.style.display = 'none'; return; }
-    v.copy(portal).project(camera);
-    const behind = v.z > 1;
-    let x = behind ? -v.x : v.x, y = behind ? -v.y : v.y;
-    const inView = !behind && Math.abs(x) < 0.95 && Math.abs(y) < 0.95;
-    pm.style.display = 'block';
-    pm.classList.toggle('edge', !inView);
-    if (inView) { pm.style.left = `${(x + 1) * 0.5 * W}px`; pm.style.top = `${(1 - y) * 0.5 * H}px`; pm.style.transform = 'rotate(45deg)'; }
-    else {
-      const len = Math.hypot(x, y) || 1;
-      let dx = x / len, dy = y / len;
-      const k = 1 / Math.max(Math.abs(dx), Math.abs(dy));
-      dx *= k * 0.9; dy *= k * 0.86;
-      pm.style.left = `${(dx + 1) * 0.5 * W}px`; pm.style.top = `${(1 - dy) * 0.5 * H}px`;
-      pm.style.transform = `rotate(${Math.atan2(dx, dy) + Math.PI * 0.75}rad)`;
-    }
+    if (portal) pin(this.el.portal, portal, true, Math.PI * 0.75); else this.el.portal.style.display = 'none';
   }
 
   resetScore() {
@@ -251,11 +229,13 @@ export class Hud {
    * then the six tiles land one after another, then the medal line, the new-best flag, the share button and the
    * prompt. `tickDebrief` drives it per frame. `log` is the run's events ({ t, k: 'wave' | 'kill' | 'hit', n }).
    */
-  showDebrief({ mode, score, waves, kills, accuracy, bestCombo, streak, aloft, medal, next, isBest, share, log = [] }) {
+  showDebrief({ mode, cause, score, waves, kills, accuracy, bestCombo, streak, aloft, medal, next, isBest, share, log = [] }) {
     this.el.dbmode.textContent = mode;
+    const [a, b] = CAUSES[cause] || CAUSES.shot;
+    this.el.dbtitle.innerHTML = `${a} <span>${b}</span>`;
     const rows = [this.el.dbscore, ...this.el.dbtiles.children];
     const fmt = {
-      int: (v) => String(Math.round(v)), pct: (v) => `${Math.round(v)}%`, secs: (v) => `${v.toFixed(1)} s`, combo: (v) => `x${Math.round(v)}`,
+      int: (v) => String(Math.round(v)), pct: (v) => `${Math.round(v)}%`, secs: (v) => `${v.toFixed(1)} s`, combo: (v) => (bestCombo > 0 ? `x${Math.round(v)}` : '\u2014'),
       time: (v) => `${Math.floor(v / 60)}:${String(Math.floor(v % 60)).padStart(2, '0')}`,
     };
     const spec = [[score, 'int'], [waves, 'int'], [kills, 'int'], [accuracy, 'pct'], [bestCombo, 'combo'], [streak, 'secs'], [aloft, 'time']];

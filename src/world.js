@@ -5,8 +5,10 @@ import {
 } from 'three/tsl';
 import { ensureGrid, heightAt, levelAtCell, cellKind, cellWater, cellTop, levelTop, isSeaAt, KIND, N as HALF_CELLS, CELL, BOUNDS, SCALE } from './terrain.js';
 import { Boxes, local } from './boxes.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { Trails } from './trails.js';
 import { buildLandmarks, findArenas } from './landmarks.js';
+import { mulberry32 } from './daily.js';
 
 // Bold, saturated storybook palette.
 export const PALETTE = {
@@ -24,14 +26,6 @@ export const TIMES = {
 };
 
 const rng = mulberry32(1337);
-function mulberry32(a) {
-  return function () {
-    a |= 0; a = (a + 0x6d2b79f5) | 0;
-    let t = Math.imul(a ^ (a >>> 15), 1 | a);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
 const rand = (a = 0, b = 1) => a + rng() * (b - a);
 const FUN = [0xff5a3c, 0xffc233, 0x2fd1a0, 0x3d8dff, 0xb45cff, 0xff6fb0, 0xffe066];
 
@@ -264,7 +258,9 @@ function terrainColor() {
   const tone = hash(cell.x.add(cell.y.mul(917.31)).add(3.7)).mul(0.14).add(0.93);
   const texel = floor(positionWorld.mul(16 / CELL));
   const texelHash = hash(tslDot(texel, vec3(1, 57.3, 113.7)).add(0.31));
-  const grain = texelHash.mul(0.12).add(0.94);
+  // texel-scale detail (the grain, the lichen speckle) fades out with distance so far hills do not shimmer
+  const detail = smoothstep(float(600), float(150), cameraPosition.sub(positionWorld).length());
+  const grain = mix(float(1), texelHash.mul(0.12).add(0.94), detail);
   const isWall = normalWorld.y.lessThan(0.5);
   const band = floor(positionWorld.y.div(3).add(0.02));
   const strata = hash(band.mul(7.13).add(0.5)).mul(0.36).add(0.78);
@@ -280,7 +276,7 @@ function terrainColor() {
   const fringe = smoothstep(1.3, 0.35, below).mul(step(float(0.01), attribute('topcol', 'vec3').g));
   col = mix(col, attribute('topcol', 'vec3').mul(grain).mul(0.92), fringe);
   // lichen on the shaded, north-facing walls
-  const lichen = step(0.86, texelHash).mul(smoothstep(-0.3, -0.8, normalWorld.z)).mul(select(isWall, float(0.5), float(0)));
+  const lichen = step(0.86, texelHash).mul(smoothstep(-0.3, -0.8, normalWorld.z)).mul(select(isWall, float(0.5), float(0))).mul(detail);
   col = mix(col, color(0xc2cca6), lichen);
   return col;
 }
@@ -290,7 +286,7 @@ function terrainColor() {
 // planar reflection, no swell), so fresh water looks exactly like the sea without touching its shader.
 function buildFreshWater(material) {
   const N = HALF_CELLS, half = CELL / 2;
-  const pos = [], dep = [], edge = [], idx = [];
+  const pos = [], dep = [], idx = [];
   let v = 0;
   for (let j = -N; j < N; j++) {
     let start = -1, level = -1, d = 0;
@@ -298,7 +294,7 @@ function buildFreshWater(material) {
       if (start < 0) return;
       const x0 = start * CELL - half, x1 = (i - 1) * CELL + half, z0 = j * CELL - half, z1 = j * CELL + half;
       pos.push(x0, level, z0, x1, level, z0, x1, level, z1, x0, level, z1);
-      for (let k = 0; k < 4; k++) { dep.push(d); edge.push(0); }
+      dep.push(d, d, d, d);
       idx.push(v, v + 2, v + 1, v, v + 3, v + 2); v += 4;
       start = -1;
     };
@@ -314,7 +310,6 @@ function buildFreshWater(material) {
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
   geo.setAttribute('depth', new THREE.Float32BufferAttribute(dep, 1));
-  geo.setAttribute('edge', new THREE.Float32BufferAttribute(edge, 1));
   geo.setIndex(idx);
   geo.computeVertexNormals();
   const mesh = new THREE.Mesh(geo, material);
@@ -343,7 +338,12 @@ function waveSlopes(P, detailFade) {
   return { sx, sz };
 }
 
-function buildWater({ mobile }) {
+// What the water mirrors. Only the things you can see in a reflection are drawn into it: the sky, the land, the
+// clouds, the props and the sun. The water itself, the sea floor, the grid walls and the vapour ribbons are not,
+// which is a third of the frame's draw calls the mirror used to spend on pixels it never showed.
+export const MIRROR_LAYER = 1;
+
+function buildWater({ mobile, camera, sunDirUniform, tod }) {
   const size = 4800, seg = 240;
   // Geometry stays in the XY plane and the mesh is rotated, so the reflector can read the plane from the object.
   const geo = new THREE.PlaneGeometry(size, size, seg, seg);
@@ -363,9 +363,16 @@ function buildWater({ mobile }) {
   near.receiveShadow = true;
   near.renderOrder = 1;
 
-  // One reflection pass shared by the near and far ocean.
+  // One real planar reflection for the near ocean, rendered at half resolution by a camera that sees only the
+  // mirror layer. The reflector clones the viewing camera the first time it sees it; seeding that clone here is
+  // what lets the mirror have its own layer mask.
   let reflection = null;
-  if (!mobile) reflection = reflector({ target: near, resolutionScale: 0.5 });
+  if (!mobile) {
+    reflection = reflector({ target: near, resolutionScale: 0.5 });
+    const mirrorCamera = camera.clone();
+    mirrorCamera.layers.set(MIRROR_LAYER);
+    reflection.reflector.virtualCameras.set(camera, mirrorCamera);
+  }
 
   const shade = (mat, d, edgeNode, useReflection) => {
     const deepMix = smoothstep(0.0, 0.7, d);
@@ -381,10 +388,10 @@ function buildWater({ mobile }) {
     const V = normalize(cameraPosition.sub(positionWorld));
     const ndv = saturate(dot(nW, V));
     const fresnel = pow(float(1).sub(ndv), 3).mul(0.72).add(0.16).mul(mix(float(0.45), float(1.0), deepMix));
-    // Analytic sky mirror everywhere; near the camera the real planar reflection takes over (blended so the
-    // near mesh and the far ocean, which cannot read the reflection while it renders, meet without a seam).
+    // The sky mirrored everywhere, today's sky with the sun in it; near the camera the real planar reflection takes
+    // over (blended so the near mesh and the far ocean, which cannot read the reflection, meet without a seam).
     const R = reflect(V.negate(), nW);
-    let skyRefl = mix(color(0xcfe8ff), color(PALETTE.sky), saturate(R.y.mul(1.6)));
+    let skyRefl = skyColor(R, sunDirUniform, tod);
     if (reflection && useReflection) {
       const distort = vec2(sx, sz).mul(0.3).mul(mix(float(0.15), float(1.0), detailFade));
       const real = reflection.sample(reflection.uvNode.add(distort)).rgb;
@@ -430,9 +437,9 @@ function buildWater({ mobile }) {
 function buildBounds() {
   const H = BOUNDS.half, C = BOUNDS.ceiling;
   const danger = uniform(0);
-  const group = new THREE.Group();
   const mat = new THREE.MeshBasicNodeMaterial({ transparent: true, depthWrite: false, side: THREE.DoubleSide });
   mat.fog = false;
+  mat.forceSinglePass = true;   // a transparent double-sided material is otherwise drawn twice, back faces then front
   const cell = 50;
   const g = fract(uv());   // uv is pre-scaled per wall so one cell = 50 world units
   const lineW = 0.035;
@@ -442,22 +449,23 @@ function buildBounds() {
   const alpha = line.mul(proximity.mul(0.55).add(danger.mul(0.35).mul(pulse.mul(0.5).add(0.5))));
   mat.colorNode = mix(color(0x9ff3ff), color(0xff5a3c), danger);
   mat.opacityNode = alpha.min(0.9);
-  const wall = (w, h, sx, sy) => {
+  // the five walls as one mesh: each plane is placed in world space, then they are merged into a single draw
+  const wall = (w, h, place) => {
     const geo = new THREE.PlaneGeometry(w, h, 1, 1);
     const uvA = geo.attributes.uv;
     for (let i = 0; i < uvA.count; i++) uvA.setXY(i, uvA.getX(i) * (w / cell), uvA.getY(i) * (h / cell));
-    const m = new THREE.Mesh(geo, mat);
-    m.frustumCulled = false;
-    group.add(m);
-    return m;
+    return place(geo);
   };
-  const n = wall(2 * H, C); n.position.set(0, C / 2, -H);
-  const s = wall(2 * H, C); s.position.set(0, C / 2, H); s.rotation.y = Math.PI;
-  const e = wall(2 * H, C); e.position.set(H, C / 2, 0); e.rotation.y = -Math.PI / 2;
-  const w = wall(2 * H, C); w.position.set(-H, C / 2, 0); w.rotation.y = Math.PI / 2;
-  const top = wall(2 * H, 2 * H); top.position.set(0, C, 0); top.rotation.x = Math.PI / 2;
-  group.renderOrder = 6;
-  return { group, setDanger: (v) => { danger.value = v; } };
+  const mesh = new THREE.Mesh(mergeGeometries([
+    wall(2 * H, C, (g) => g.translate(0, C / 2, -H)),
+    wall(2 * H, C, (g) => g.rotateY(Math.PI).translate(0, C / 2, H)),
+    wall(2 * H, C, (g) => g.rotateY(-Math.PI / 2).translate(H, C / 2, 0)),
+    wall(2 * H, C, (g) => g.rotateY(Math.PI / 2).translate(-H, C / 2, 0)),
+    wall(2 * H, 2 * H, (g) => g.rotateX(Math.PI / 2).translate(0, C, 0)),
+  ]), mat);
+  mesh.frustumCulled = false;
+  mesh.renderOrder = 6;
+  return { mesh, setDanger: (v) => { danger.value = v; } };
 }
 
 // Smooth sandy seafloor visible through the shallows.
@@ -483,19 +491,21 @@ function buildSeafloor() {
 }
 
 // ---------------------------------------------------------------- sky & sun
-function buildSky(sunDirUniform, tod) {
-  const geo = new THREE.SphereGeometry(6500, 24, 12);
-  const mat = new THREE.MeshBasicNodeMaterial({ side: THREE.BackSide, depthWrite: false });
-  mat.fog = false;
-  const dir = normalize(positionLocal);
+/** The sky's colour in a direction: the time of day's gradient, a warm glow around the sun and along the sun-side
+ *  horizon, and the sun's disc. The dome draws it; the water mirrors it. */
+function skyColor(dir, sunDirUniform, tod) {
   const t = saturate(dir.y.mul(1.25).add(0.05));
   let c = mix(tod.horizon, tod.skyMid, smoothstep(0.0, 0.09, t));
   c = mix(c, tod.skyTop, smoothstep(0.09, 0.8, t));
   const sunDot = saturate(dot(dir, sunDirUniform));
-  // warm glow around the sun and along the sun-side horizon
   const horizonGlow = smoothstep(0.35, 0.0, dir.y).mul(pow(sunDot, 3)).mul(0.35);
-  c = c.add(color(0xffe1b0).mul(pow(sunDot, 120).mul(1.3))).add(tod.glow.mul(pow(sunDot, 5).mul(0.22).add(horizonGlow)));
-  mat.colorNode = c;
+  return c.add(color(0xffe1b0).mul(pow(sunDot, 120).mul(1.3))).add(tod.glow.mul(pow(sunDot, 5).mul(0.22).add(horizonGlow)));
+}
+function buildSky(sunDirUniform, tod) {
+  const geo = new THREE.SphereGeometry(6500, 24, 12);
+  const mat = new THREE.MeshBasicNodeMaterial({ side: THREE.BackSide, depthWrite: false });
+  mat.fog = false;
+  mat.colorNode = skyColor(normalize(positionLocal), sunDirUniform, tod);
   const mesh = new THREE.Mesh(geo, mat);
   mesh.frustumCulled = false;
   return mesh;
@@ -600,12 +610,8 @@ function buildProps(scene, lit, glow) {
   }
   leaves.flush();
 
-  // A group is a run of boxes with local matrices, re-placed under a parent matrix each frame.
-  const group = (boxes) => {
-    const start = lit.alloc(boxes.length);
-    boxes.forEach(([x, y, z, sx, sy, sz, hex], k) => { lit.color(start + k, hex); lit.scalar(start + k, 0.8); });
-    return { start, locals: boxes.map(([x, y, z, sx, sy, sz]) => local(x, y, z, sx, sy, sz)), mtx: new THREE.Matrix4() };
-  };
+  // A group of boxes and the matrix it is placed under each frame.
+  const group = (parts) => ({ ...lit.group(parts), mtx: new THREE.Matrix4() });
 
   // --- hot air balloons: stepped voxel envelopes with a flickering burner
   const balloons = [];
@@ -621,7 +627,7 @@ function buildProps(scene, lit, glow) {
     const a = rand(0, Math.PI * 2), rad = rand(300, 1100) * SCALE;
     const burner = glow.alloc();
     glow.color(burner, 0xffb050);
-    balloons.push({ ...group(parts), burner, x: Math.cos(a) * rad, y: rand(150, 300), z: Math.sin(a) * rad, phase: rand(0, 6), drift: rand(1.5, 3.5), rot: rand(0, 6) });
+    balloons.push({ ...group(parts), burner, x: Math.cos(a) * rad, y: rand(150, 300), z: Math.sin(a) * rad, r: 13, phase: rand(0, 6), drift: rand(1.5, 3.5), rot: rand(0, 6) });
   }
 
   // --- sailboats, each towing a pair of wake ribbons from the stern
@@ -859,11 +865,11 @@ function buildProps(scene, lit, glow) {
     gustAmt.value = THREE.MathUtils.clamp(speed / 80, 0, 1.4);
   };
   update(0, 0, null, 0);
-  return { update, gullSpots, boats, flocks, brushPalms, meadows, villages, scare };
+  return { update, gullSpots, boats, flocks, balloons, brushPalms, meadows, villages, scare, leaves: leaves.mesh };
 }
 
 // ---------------------------------------------------------------- assemble
-export function createWorld(scene, { mobile, lit, glow, soft }) {
+export function createWorld(scene, { mobile, lit, glow, soft, camera }) {
   const sunDirUniform = uniform(SUN_DIR.clone());
   const tod = { skyTop: uniform(new THREE.Color(TIMES.noon.skyTop)), skyMid: uniform(new THREE.Color(TIMES.noon.skyMid)), horizon: uniform(new THREE.Color(TIMES.noon.horizon)), glow: uniform(new THREE.Color(TIMES.noon.glow)), fog: uniform(new THREE.Color(TIMES.noon.fog)) };
 
@@ -895,7 +901,7 @@ export function createWorld(scene, { mobile, lit, glow, soft }) {
 
   const terrain = buildTerrain();
   const seafloor = buildSeafloor();
-  const water = buildWater({ mobile });
+  const water = buildWater({ mobile, camera, sunDirUniform, tod });
   const fresh = buildFreshWater(water.lakeMaterial);
   const sky = buildSky(sunDirUniform, tod);
   const sunSlot = glow.alloc();
@@ -905,22 +911,20 @@ export function createWorld(scene, { mobile, lit, glow, soft }) {
   const landmarks = buildLandmarks(lit, glow);
   const arenas = findArenas(props.villages);
   const bounds = buildBounds();
-  scene.add(terrain, seafloor, water.near, water.far, fresh, sky, clouds.mesh, bounds.group);
+  // things you can fly close past: the game sounds a rush of air for each, judged by its x, y, z and radius r
+  const obstacles = [...landmarks.obstacles, ...props.balloons];
+  scene.add(terrain, seafloor, water.near, water.far, fresh, sky, clouds.mesh, bounds.mesh);
+  for (const o of [terrain, sky, clouds.mesh, lit.mesh, glow.mesh, props.leaves]) o.layers.enable(MIRROR_LAYER);
 
   // Where the sun sits on screen, for the sun shafts: strength fades as it leaves the frame and is 0 behind us.
   const sunScreen = { uv: uniform(new THREE.Vector2(0.5, 0.5)), strength: uniform(0) };
   const sunNdc = new THREE.Vector3(), tmpDir = new THREE.Vector3();
   const shadowFocus = new THREE.Vector3(), sunM = new THREE.Matrix4(), sunQ = new THREE.Quaternion(), sunS = new THREE.Vector3(150, 150, 150), sunP = new THREE.Vector3(), sunE = new THREE.Euler();
-  let sunSpin = 0, frameNo = 0;
-  let timeOfDay = 'noon';
-  // The shadow map can be redrawn every `shadow.every` frames; anything above 1 makes the planes' own shadows
-  // stutter against them, so it stays at 1 on desktop.
-  const shadow = { every: 1 };
+  let sunSpin = 0;
   /** Swings the sun and retints the light, sky and fog for one of TIMES. The water is not touched: it only
    *  receives the new light like everything else. */
   const setTimeOfDay = (name) => {
     const T = TIMES[name] || TIMES.noon;
-    timeOfDay = name;
     SUN_DIR.set(T.dir[0], T.dir[1], T.dir[2]).normalize();
     sunDirUniform.value.copy(SUN_DIR);
     lightRight.crossVectors(new THREE.Vector3(0, 1, 0), SUN_DIR).normalize();
@@ -983,8 +987,8 @@ export function createWorld(scene, { mobile, lit, glow, soft }) {
     sun.position.copy(shadowFocus).addScaledVector(SUN_DIR, 1150);
     sun.target.position.copy(shadowFocus);
     sun.target.updateMatrixWorld();
-    sm.needsUpdate = (frameNo++ % shadow.every) === 0;
+    sm.needsUpdate = true;
   };
 
-  return { update, setDanger: bounds.setDanger, props, sunScreen, smear, clouds: clouds.clouds, brushPalms: props.brushPalms, scare: props.scare, setTimeOfDay, get timeOfDay() { return timeOfDay; }, landmarks, arenas, shadow, bakeMs: bake.ms };
+  return { update, setDanger: bounds.setDanger, sunScreen, smear, brushPalms: props.brushPalms, scare: props.scare, setTimeOfDay, landmarks, arenas, obstacles };
 }

@@ -2,7 +2,7 @@
 // lit, glow intensity when emissive, packed radius/alpha when soft. Props, planes, particles, tracers and the sun
 // share a handful of draw calls.
 import * as THREE from 'three/webgpu';
-import { attribute, varyingProperty, positionGeometry, length, smoothstep, floor, fract, abs, select, time, hash, instanceIndex, vec3, dot } from 'three/tsl';
+import { attribute, varyingProperty, positionGeometry, length, smoothstep, floor, fract, hash, instanceIndex, vec3, dot } from 'three/tsl';
 
 // The renderer writes each instance's color into this varying; reading it lets glow boxes emit their own color.
 const instanceColor = varyingProperty('vec3', 'vInstanceColor');
@@ -11,9 +11,8 @@ const ZERO = new THREE.Matrix4().makeScale(0, 0, 0);
 const UP = new THREE.Vector3(0, 1, 0);
 const m = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Vector3(), p = new THREE.Vector3(), col = new THREE.Color();
 
-/** Soft-batch scalar: integer part is the inner radius (x100; 60+ selects a falling-water strip), fraction is the alpha. */
+/** Soft-batch scalar: integer part is the inner radius (x100), fraction is the alpha. */
 export const softParam = (alpha, inner = 0) => Math.round(inner * 100) + Math.min(0.999, Math.max(0, alpha));
-export const STRIP = 0.6;
 
 export class Boxes {
   constructor(scene, capacity, { glow = false, soft = false, positionNode = null } = {}) {
@@ -26,14 +25,10 @@ export class Boxes {
       // The side faces fall outside the radius so only the two flat faces ever show.
       mat = new THREE.MeshBasicNodeMaterial({ transparent: true, depthWrite: false });
       const param = attribute('param', 'float');
-      const whole = floor(param);
       const r = length(positionGeometry.xy);
-      const inner = whole.div(100);
+      const inner = floor(param).div(100);
       const disc = smoothstep(0.5, 0.44, r).mul(smoothstep(inner, inner.add(0.05), r));
-      // strip mode: a soft-edged rectangle with bands streaming down its local y (waterfalls, cascades)
-      const flow = fract(positionGeometry.y.mul(5).add(time.mul(1.6)).add(hash(instanceIndex)));
-      const strip = smoothstep(0.5, 0.42, abs(positionGeometry.x)).mul(smoothstep(0.5, 0.47, abs(positionGeometry.y))).mul(smoothstep(0.25, 0.55, flow).mul(0.45).add(0.6));
-      mat.opacityNode = select(whole.greaterThanEqual(60), strip, disc).mul(fract(param));
+      mat.opacityNode = disc.mul(fract(param));
     } else {
       mat = new THREE.MeshStandardNodeMaterial(glow ? { color: 0x000000, roughness: 1 } : { roughness: 1, metalness: 0.05 });
       if (glow) { mat.emissiveNode = instanceColor.mul(attribute('param', 'float')); mat.fog = false; }
@@ -85,6 +80,14 @@ export class Boxes {
     for (let b = start >> BUCKET_SHIFT, last = (start + locals.length - 1) >> BUCKET_SHIFT; b <= last; b++) this.dirty[b] = 1;
     this.any = true;
   }
+  /** Paints a run of static parts [x, y, z, sx, sy, sz, color, roughness?] from `start` and returns their local
+   *  matrices, ready for `place`. `rough` is the roughness a part does not name. */
+  paint(start, parts, rough = 0.8) {
+    parts.forEach((b, k) => { this.color(start + k, b[6]); this.scalar(start + k, b[7] ?? rough); });
+    return parts.map((b) => local(b[0], b[1], b[2], b[3], b[4], b[5]));
+  }
+  /** A group is a run of boxes with local matrices, re-placed under a parent matrix each frame. */
+  group(parts, rough) { const start = this.alloc(parts.length); return { start, locals: this.paint(start, parts, rough) }; }
 
   /** Upload only the buckets touched since the last flush, each run of them as one range. Call once per frame. */
   flush() {

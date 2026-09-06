@@ -14,8 +14,12 @@ import { Medals, MEDALS, byId } from './medals.js';
 import { todayKey, todayLabel, dailySeed, mulberry32, loadDailyBest, saveDailyBest, shareLine, dayNumber } from './daily.js';
 
 const tv = new THREE.Vector3(), tv2 = new THREE.Vector3(), tq = new THREE.Quaternion(), spreadV = new THREE.Vector3();
+const fbPos = new THREE.Vector3(), fbRel = new THREE.Vector3(), fbLocal = new THREE.Vector3();   // the fly-by pass's own temporaries
 const clamp = THREE.MathUtils.clamp;
-const WORLD_UP = new THREE.Vector3(0, 1, 0), NEG_Z = new THREE.Vector3(0, 0, -1);
+const WORLD_UP = new THREE.Vector3(0, 1, 0), NEG_Z = new THREE.Vector3(0, 0, -1), STILL = new THREE.Vector3();
+const SOUND_OF_SPEED = 340;   // what the Doppler shift of a passing engine is measured against, in units per second
+// where the ground is felt from: under the plane, off each wingtip, and ahead where a cliff would be
+const RUSH_TAPS = [[0, 0], [0, 12], [0, -12], [26, 0], [30, 14], [30, -14]];
 const rnd = (a, b) => a + Math.random() * (b - a);
 const MAX_ENEMIES = 9;
 const TWO_PI = Math.PI * 2;
@@ -42,6 +46,7 @@ export class Game {
     // contrails: up in the cold air above 360 the player's wingtips draw long white lines that hang for a while
     this.contrails = new Trails(scene, 2, 140, 0.45, { fade: 0.05, opacity: 0.42, sample: 0.09, widen: true, renderOrder: 5 });
 
+    this.flybys = Array.from({ length: MAX_ENEMIES }, () => ({ id: null, dist: 0, side: 0, doppler: 1, speed: 0 }));   // reused per frame
     this.pack = { hunting: 0, max: 1 };   // how many bandits are hunting the player right now, and how many may
     this.assist = { radius: 0, turn: 0, cone: 0.08, range: 380 };   // aim help for the player's guns, generous early
     this.arenaOrder = []; this.arena = null;                          // where this wave's portal opened
@@ -90,7 +95,7 @@ export class Game {
     if (this.portal) this.portal.hide();
     if (this.airship) this.airship.hide();
     if (this.hud) this.hud.resetScore();
-    if (this.world) this.world.setDanger(0);
+    this.world.setDanger(0);
     this.playerBullets.clear(); this.enemyBullets.clear(); this.effects.clear();
     for (const e of this.enemies) { e.ac.alive = false; e.ac.hide(); e.pending = 0; }
   }
@@ -102,7 +107,7 @@ export class Game {
     this.daily = mode === 'daily';
     this.rng = this.daily ? mulberry32(dailySeed(todayKey())) : Math.random;
     // the light for this run: the day picks its own, free play draws one
-    if (this.world.setTimeOfDay) this.world.setTimeOfDay(['morning', 'noon', 'golden'][Math.floor(this.rng() * 3)]);
+    this.world.setTimeOfDay(['morning', 'noon', 'golden'][Math.floor(this.rng() * 3)]);
     if (this.daily) {
       // the day decides where you begin: somewhere on a ring around the isles, pointed roughly at them
       const a = this.rng() * TWO_PI, r = 650 + this.rng() * 250;
@@ -322,8 +327,6 @@ export class Game {
     this.positionCameraIdle();
   }
 
-  aliveEnemies() { return this.enemies.filter((e) => e.ac.alive).map((e) => e.ac); }
-
   fire(ac, pool, damage, spread, rate) {
     if (ac.gunTimer > 0) return;
     ac.gunTimer = 1 / rate;
@@ -341,7 +344,7 @@ export class Game {
     const c = ac.plane.scheme;
     this.effects.explosion(ac.pos, [c.body, c.accent, c.trim, 0x333333], size);
     this.effects.wreck(ac.pos, ac.velocity, [c.body, c.accent, c.trim]);
-    if (this.world.scare) this.world.scare(ac.pos, 180);
+    this.world.scare(ac.pos, 180);
     this.shakeAt(ac.pos, 0.3 * size);
     this.audio.explosion(ac.pos.distanceTo(this.player.pos), size);
   }
@@ -391,7 +394,7 @@ export class Game {
       tv.copy(p.pos).addScaledVector(p.forward, -4); tv.y = ground + 1;
       this.effects.dust(tv, p.velocity);
     }
-    if (p.pos.y < 40 && this.world.brushPalms) this.world.brushPalms(p.pos, dt, (x, y, z) => this.effects.leaves(tv.set(x, y, z), p.velocity));
+    if (p.pos.y < 40) this.world.brushPalms(p.pos, dt, (x, y, z) => { this.effects.leaves(tv.set(x, y, z), p.velocity); this.audio.whoosh(0.35, p.toLocal(tv, tv2).x / 8, 0.5); });
     const fast = p.speed > p.stats.maxSpeed * 1.03;
     if (fast && !this.wasFast) { this.effects.cone(p.pos, p.forward); this.audio.boom(); this.camKick = 1; }
     this.wasFast = fast || (this.wasFast && p.speed > p.stats.maxSpeed * 0.97);
@@ -476,7 +479,7 @@ export class Game {
         this.outsideTimer = Math.max(0, this.outsideTimer - dt * 2.5);   // countdown recovers quickly once back inside
       }
       this.outside = outside;
-      if (this.world) this.world.setDanger(outside ? 1 : Math.min(1, this.outsideTimer / 2));
+      this.world.setDanger(outside ? 1 : Math.min(1, this.outsideTimer / 2));
       const groundUnder = groundAt(p.pos.x, p.pos.z), alt = p.pos.y - groundUnder;
       if (!outside && alt < 22 && p.forward.y < 0) warning = 'PULL UP';
       hud.warn(warning);
@@ -495,7 +498,7 @@ export class Game {
         }
       }
       this.collectTargets();
-      if (this.world.landmarks) { const l = this.world.landmarks.check(p.pos, this.found); if (l) this.foundLandmark(l); }
+      const found = this.world.landmarks.check(p.pos, this.found); if (found) this.foundLandmark(found);
       p.lookTarget = this.nearestEnemy(400);
       p.update(dt);
       this.shedTip(p);
@@ -562,7 +565,7 @@ export class Game {
     }
 
     // ---- bullets
-    const targets = this.collectTargets();
+    const targets = this.targetList;
     this.playerBullets.update(dt, targets, (t, point, dmg) => {
       this.effects.hitSpark(point);
       this.audio.hit(t.pos.distanceTo(p.pos));
@@ -574,7 +577,7 @@ export class Game {
         const type = this.enemies.find((e) => e.ac === t)?.type || 'hound';
         this.killAircraft(t, 1); this.registerKill(TYPE_LABEL[type], TYPE_SCORE[type] * this.wave, t.pos);
         if (p.pos.y - groundAt(p.pos.x, p.pos.z) < 8) this.earn('wavetop');
-        const last = this.pending === 0 && this.aliveEnemies().length === 0 && !this.airship.alive;
+        const last = this.pending === 0 && !this.enemies.some((e) => e.ac.alive) && !this.airship.alive;
         if (!last && type === 'ace') {   // an ace down earns a banner and a short turn of the camera round its wreck
           this.hud.banner('ACE DOWN', 1300);
           this.killCam = 0.4; this.killPoint.copy(t.pos);
@@ -624,17 +627,57 @@ export class Game {
     if (this.player.alive) this.present(this.player);
     for (const e of this.enemies) if (e.ac.alive) this.present(e.ac);
     this.updateCamera(dt);
-    const alive = this.player.alive && this.state === 'playing';
-    this.audio.setFlight(alive ? this.player.speed : 0, alive ? this.player.input.throttle : 0, alive && this.outside, dt, alive ? this.player.health / this.player.maxHealth : 1);
+    const alive = this.player.alive && this.state === 'playing', pl = this.player;
+    this.audio.setFlight(alive ? pl.speed : 0, alive ? pl.input.throttle : 0, alive && this.outside, dt, alive ? pl.health / pl.maxHealth : 1,
+      alive ? this.groundRush() : 0, alive ? clamp(Math.abs(pl.pitchVel) / pl.stats.pitchRate, 0, 1) : 0);
     this.audio.setAmbience(this.airship.alive ? clamp(1 - this.airship.pos.distanceTo(this.camera.position) / 420, 0, 1) : 0);
+    this.passes(alive);
     if (this.state === 'playing') {
       const p = this.player;
-      const enemiesAlive = this.aliveEnemies();
       this.hud.updateStats({ score: this.score, wave: this.wave, enemies: (this.aliveCount || 0) + this.pending, total: this.waveSize || 0, health: p.health, maxHealth: p.maxHealth, speed: p.speed, maxSpeed: PLAYER_STATS.maxSpeed * 1.2, boost: p.input.throttle > 0, firing: this.input.fire, combo: this.combo > 0 ? this.comboTimer / 2.5 : 0 }, dt);
       const lead = this.computeLead(this.targetList);
-      if (this.world.landmarks) for (const l of this.world.landmarks.list) l.found = this.found.has(l.id);
-      this.hud.updateOverlay(this.camera, { pos: p.renderPos, forward: p.renderForward }, this.targetList, lead.point, lead.locked, this.portal.active ? this.portal.pos : null, this.world.landmarks ? this.world.landmarks.list : null);
+      for (const l of this.world.landmarks.list) l.found = this.found.has(l.id);
+      this.hud.updateOverlay(this.camera, { pos: p.renderPos, forward: p.renderForward }, this.targetList, lead.point, lead.locked, this.portal.active ? this.portal.pos : null, this.world.landmarks.list, dt);
     }
+  }
+
+  /** How close the ground and its walls are, 0 in open air to 1 skimming, weighted by speed: the wingtips and the
+   *  air ahead are sampled as well as the ground below, so a cliff beside or in front of you counts too. */
+  groundRush() {
+    const p = this.player;
+    let near = 0;
+    for (const [f, r] of RUSH_TAPS) {
+      tv.copy(p.pos).addScaledVector(p.forward, f).addScaledVector(p.right, r);
+      near = Math.max(near, clamp(1 - (p.pos.y - groundAt(tv.x, tv.z)) / 34, 0, 1));
+    }
+    return near * near * clamp((p.speed - 45) / 70, 0, 1);
+  }
+
+  /** Fly-by sound, per displayed frame: the nearest bandits' engines follow them round you, Doppler-shifted by how
+   *  fast the gap is closing, and anything big that goes past inside its radius, bandit, airship, portal, balloon or
+   *  landmark, lands a rush of air on the side it passed. The pass is the frame the gap stops shrinking; how loud
+   *  it is comes from the fastest closing speed of the approach and how close it came. */
+  passes(alive) {
+    const p = this.player, list = this.flybys;
+    let n = 0;
+    const consider = (o, pos, vel, r, size, voice) => {
+      fbRel.copy(pos).sub(p.pos);
+      const d = fbRel.length() || 1;
+      const closing = -fbRel.dot(tv2.copy(vel).sub(p.velocity)) / d;   // how fast the gap shrinks, in units per second
+      const side = clamp(p.toLocal(pos, fbLocal).x / 24, -1, 1);
+      if (closing > 0) o.peak = Math.max(o.peak || 0, closing);
+      else if (o.peak > 30) { if (d < r) this.audio.whoosh(clamp(o.peak / 180, 0, 1) * (1 - d / r), side, size); o.peak = 0; }
+      if (voice && d < 170) { const l = list[n++]; l.id = o; l.dist = d; l.side = side; l.speed = voice.speed; l.doppler = SOUND_OF_SPEED / (SOUND_OF_SPEED - clamp(closing, -120, 120)); }
+    };
+    if (alive) {
+      for (const e of this.enemies) if (e.ac.alive) consider(e, e.ac.pos, e.ac.velocity, 42, 1, e.ac);
+      if (this.airship.alive) consider(this.airship, this.airship.pos, this.airship.velocity, 60, 2.2, null);
+      if (this.portal.active) consider(this.portal, fbPos.copy(this.portal.pos).setY(this.portal.pos.y + 20), STILL, 36, 1.4, null);
+      for (const o of this.world.obstacles) consider(o, fbPos.set(o.x, o.y, o.z), STILL, o.r, 1, null);
+      // the three nearest to the front of the list, in place
+      for (let i = 0; i < Math.min(n, 3); i++) { let m = i; for (let j = i + 1; j < n; j++) if (list[j].dist < list[m].dist) m = j; const l = list[i]; list[i] = list[m]; list[m] = l; }
+    }
+    this.audio.setFlybys(list, Math.min(n, 3));
   }
 
   smokeTrail(ac, dt) {
@@ -712,6 +755,7 @@ export class Game {
 
   gameOver() {
     this.state = 'gameover';
+    this.hud.showTouch(false);   // the thumbs' buttons would sit over the debrief
     this.bestStreak = Math.max(this.bestStreak, this.streak);
     let isBest = this.score > this.best;
     if (isBest) { this.best = this.score; store.set('skyfight.best', String(this.best)); this.hud.text('best', String(this.best)); }
@@ -733,7 +777,7 @@ export class Game {
     else next = MEDALS.find((m) => m.wave && !this.medals.has(m.id)) || null;
     this.hud.medals(this.medals);
     this.hud.showDebrief({
-      mode: this.daily ? `Flight #${dayNumber()} · ${todayLabel()}` : 'Free flight',
+      mode: this.daily ? `Flight #${dayNumber()} · ${todayLabel()}` : 'Free flight', cause: this.deathCause,
       score: this.score, waves: this.wave, kills: this.kills, accuracy: this.shots ? this.hits / this.shots * 100 : 0,
       bestCombo: this.bestCombo, streak: this.bestStreak, aloft: this.aloft, medal, next, isBest, share, log: this.log,
     });

@@ -23,6 +23,7 @@ export class Trails {
     geo.setIndex(idx);
     const mat = new THREE.MeshBasicNodeMaterial({ color: 0xffffff, transparent: true, depthWrite: false, side: THREE.DoubleSide });
     mat.opacityNode = attribute('alpha', 'float').mul(opacity);
+    mat.forceSinglePass = true;   // a transparent double-sided material is otherwise drawn twice
     this.mesh = new THREE.Mesh(geo, mat);
     this.mesh.frustumCulled = false;
     this.mesh.renderOrder = renderOrder;

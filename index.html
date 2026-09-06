@@ -2,7 +2,9 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="theme-color" content="#1d2b3a" />
   <title>Flight</title>
   <link rel="stylesheet" href="/src/style.css" />
 </head>
@@ -35,13 +37,15 @@
 
   <div id="touch" class="hidden">
     <div id="stickzone"><div id="stickbase"><div id="stickknob"></div></div></div>
-    <button id="btn-boost" class="tbtn">BOOST</button>
+    <button id="btn-boost" class="tbtn" aria-label="Boost"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5l7 7-7 7M12 5l7 7-7 7" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
     <button id="btn-recenter" class="tbtn round" aria-label="Recenter tilt">&#10227;</button>
     <button id="btn-quit" class="tbtn round quit" aria-label="Quit to title">&#10005;</button>
     <button id="btn-mute" class="tbtn round mute" aria-label="Mute">&#9835;</button>
-    <button id="btn-fire" class="tbtn fire">FIRE</button>
+    <button id="btn-fire" class="tbtn fire" aria-label="Fire"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="6.5" fill="none" stroke="currentColor" stroke-width="2.4"/><circle cx="12" cy="12" r="1.8" fill="currentColor"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg></button>
   </div>
   <div id="mute" class="pill hidden">Muted &middot; M</div>
+  <div id="notice" class="pill hidden"></div>
+  <div id="rotate"><div><svg viewBox="0 0 48 48" aria-hidden="true"><rect x="15" y="4" width="18" height="40" rx="3" fill="none" stroke="currentColor" stroke-width="2.5"/><path d="M40 20a16 16 0 0 0-6-9l-3 3" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg><p>Turn your phone sideways</p><span>Flight is played in landscape</span></div></div>
 
   <div id="title" class="screen">
     <div class="intro">
@@ -89,7 +93,7 @@
   <div id="gameover" class="screen hidden">
     <div class="debrief">
       <p class="mode" id="dbmode">Free flight</p>
-      <h1>SHOT <span>DOWN</span></h1>
+      <h1 id="dbtitle">SHOT <span>DOWN</span></h1>
       <div class="scoreline row"><b>0</b><span>points</span></div>
       <div id="dblog" class="log" aria-label="Flight log"></div>
       <div class="tiles" id="dbtiles">

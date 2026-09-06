@@ -17,7 +17,7 @@ export class Sound {
     document.addEventListener('visibilitychange', wake);
     window.addEventListener('keydown', wake); window.addEventListener('pointerdown', wake);
     this.warnTimer = 0; this.warnHi = false; this.beatTimer = 0;
-    this.lastGun = 0; this.lastHit = 0; this.lastWhiz = 0; this.lastDive = 0;
+    this.lastGun = 0; this.lastHit = 0; this.lastWhiz = 0; this.lastDive = 0; this.lastWhoosh = 0;
   }
 
   /** Creates the graph. Must be called from a user gesture (start). */
@@ -64,6 +64,59 @@ export class Sound {
     s.a.connect(s.lp); s.b.connect(s.lp); s.lp.connect(s.gain); s.gain.connect(this.bus);
     s.a.start(); s.b.start();
 
+    // ground rush: low, rumbling air that rises when the ground or a cliff wall is close at speed
+    const r = this.rush = { src: ctx.createBufferSource(), lp: ctx.createBiquadFilter(), gain: ctx.createGain() };
+    r.src.buffer = buf; r.src.loop = true; r.src.loopStart = 0.7;
+    r.lp.type = 'lowpass'; r.lp.frequency.value = 420; r.lp.Q.value = 0.8;
+    r.gain.gain.value = 0;
+    r.src.connect(r.lp); r.lp.connect(r.gain); r.gain.connect(this.bus);
+    r.src.start();
+
+    // fly-by voices: the engines and airframe wind of the nearest bandits, one voice each, Doppler-shifted and
+    // panned to the side they are on. Three is enough: a fourth plane that close is never the one you hear.
+    this.voices = [];
+    for (let k = 0; k < 3; k++) {
+      const v = { id: null, a: ctx.createOscillator(), b: ctx.createOscillator(), lp: ctx.createBiquadFilter(), chop: ctx.createGain(), lfo: ctx.createOscillator(), lfoGain: ctx.createGain(), wind: ctx.createBufferSource(), bp: ctx.createBiquadFilter(), windGain: ctx.createGain(), gain: ctx.createGain(), pan: ctx.createStereoPanner() };
+      v.a.type = 'sawtooth'; v.b.type = 'square';
+      v.lp.type = 'lowpass'; v.lp.frequency.value = 500; v.lp.Q.value = 1.1;
+      v.chop.gain.value = 0.75; v.lfoGain.gain.value = 0.25; v.lfo.type = 'sine'; v.lfo.frequency.value = 30;
+      v.wind.buffer = buf; v.wind.loop = true; v.wind.loopStart = 0.3 * k;
+      v.bp.type = 'bandpass'; v.bp.frequency.value = 900; v.bp.Q.value = 0.7;
+      v.gain.gain.value = 0; v.windGain.gain.value = 0;
+      v.a.connect(v.lp); v.b.connect(v.lp); v.lp.connect(v.chop); v.chop.connect(v.gain);
+      v.lfo.connect(v.lfoGain); v.lfoGain.connect(v.chop.gain);
+      v.wind.connect(v.bp); v.bp.connect(v.windGain); v.windGain.connect(v.gain);
+      v.gain.connect(v.pan); v.pan.connect(this.bus);
+      v.a.start(); v.b.start(); v.lfo.start(); v.wind.start();
+      this.voices.push(v);
+    }
+  }
+
+  /**
+   * The planes around you, once per displayed frame: the first `n` of `list`, nearest first, each { id, dist, side
+   * (-1 left .. 1 right), doppler (pitch factor from the closing speed), speed }. A voice sticks to its plane while
+   * it stays on the list, fades when it drops off, and is handed to a new plane only when free, so nothing clicks.
+   */
+  setFlybys(list, n) {
+    if (!this.ctx) return;
+    const t = this.ctx.currentTime, vs = this.voices;
+    for (const v of vs) { let keep = false; for (let i = 0; i < n && !keep; i++) keep = list[i].id === v.id; if (!keep) v.id = null; }
+    for (let i = 0; i < n; i++) {
+      const l = list[i];
+      const v = vs.find((x) => x.id === l.id) || vs.find((x) => x.id === null);
+      if (!v) continue;
+      v.id = l.id;
+      const near = Math.pow(clamp(1 - l.dist / 170, 0, 1), 1.7);
+      const f = (62 + l.speed * 0.95) * l.doppler;
+      v.a.frequency.setTargetAtTime(f, t, 0.04); v.b.frequency.setTargetAtTime(f * 1.5 + 3, t, 0.04);
+      v.lfo.frequency.setTargetAtTime((15 + l.speed * 0.3) * l.doppler, t, 0.06);
+      v.lp.frequency.setTargetAtTime(380 + near * 1100, t, 0.06);
+      v.bp.frequency.setTargetAtTime(600 + near * 900, t, 0.08);
+      v.windGain.gain.setTargetAtTime(near * 0.8, t, 0.06);
+      v.gain.gain.setTargetAtTime(near * 0.2, t, 0.05);
+      v.pan.pan.setTargetAtTime(l.side * 0.75, t, 0.05);
+    }
+    for (const v of vs) if (v.id === null) v.gain.gain.setTargetAtTime(0, t, 0.09);
   }
 
   /** Ambient layers: `ship` is 0..1 closeness to the airship. */
@@ -79,8 +132,9 @@ export class Sound {
     return this.muted;
   }
 
-  /** Continuous layers, once per displayed frame. speed 0 = engine off. `hull` 0..1 brings in a heartbeat below 0.3. */
-  setFlight(speed, throttle, warning, dt, hull = 1) {
+  /** Continuous layers, once per displayed frame. speed 0 = engine off. `hull` 0..1 brings in a heartbeat below 0.3.
+   *  `rush` 0..1 is how close the ground or a wall is at speed; `pull` 0..1 is how hard the wings are loaded. */
+  setFlight(speed, throttle, warning, dt, hull = 1, rush = 0, pull = 0) {
     if (!this.ctx) return;
     const t = this.ctx.currentTime, e = this.engine, w = this.wind;
     if (hull < 0.3 && speed > 0) {
@@ -94,8 +148,11 @@ export class Sound {
     e.lfo.frequency.setTargetAtTime(14 + speed * 0.3, t, 0.1);
     e.lp.frequency.setTargetAtTime(420 + Math.max(0, throttle) * 500 + speed * 2, t, 0.1);
     e.gain.gain.setTargetAtTime(on * (0.13 + Math.max(0, throttle) * 0.07), t, 0.12);
-    w.bp.frequency.setTargetAtTime(350 + speed * 14, t, 0.15);
-    w.gain.gain.setTargetAtTime(on * (0.015 + clamp((speed - 42) / 83, 0, 1) * 0.16), t, 0.15);
+    // the wind rises with speed and roughens under g, the way the slipstream does when you haul the nose round
+    w.bp.frequency.setTargetAtTime(350 + speed * 14 + pull * 400, t, 0.15);
+    w.gain.gain.setTargetAtTime(on * (0.015 + clamp((speed - 42) / 83, 0, 1) * 0.16 + pull * 0.09), t, 0.12);
+    this.rush.lp.frequency.setTargetAtTime(300 + speed * 4, t, 0.2);
+    this.rush.gain.gain.setTargetAtTime(on * rush * 0.24, t, 0.12);
     // combat-zone warning: alternating two-tone beeps
     if (warning) {
       this.warnTimer -= dt;
@@ -172,6 +229,26 @@ export class Sound {
     const g = ctx.createGain();
     g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.11 * a, t + 0.15); g.gain.setValueAtTime(0.11 * a, t + 0.9); g.gain.exponentialRampToValueAtTime(0.0001, t + 1.2);
     o.connect(lp); lp.connect(g); g.connect(this.bus); o.start(t); o.stop(t + 1.25);
+  }
+
+  /** Something going past close and fast: a rush of air on the side it passes, its filter falling away behind it
+   *  like a Doppler tail. `size` sets the body of the sound: 0.5 is a canopy of fronds, 1 a plane, 2 the airship,
+   *  which also lands a soft thump of displaced air. */
+  whoosh(intensity, side = 0, size = 1) {
+    if (!this.ctx) return;
+    const ctx = this.ctx, t = ctx.currentTime;
+    if (t - this.lastWhoosh < 0.1 || intensity <= 0.02) return;
+    this.lastWhoosh = t;
+    const a = clamp(intensity, 0, 1), dur = 0.3 + a * 0.35 + size * 0.12;
+    const src = ctx.createBufferSource(); src.buffer = this.noise; src.loop = true; src.loopStart = Math.random() * 1.5;
+    const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.Q.value = 0.9;
+    bp.frequency.setValueAtTime(1500 / size, t); bp.frequency.exponentialRampToValueAtTime(220 / Math.sqrt(size), t + dur);
+    const g = ctx.createGain();
+    // the band-pass throws most of the noise away, so the envelope runs hot to land the pass over your own engine
+    g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime((0.2 + a * 1.1) * (size >= 1.5 ? 1.3 : 1), t + 0.05); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    const pan = ctx.createStereoPanner(); pan.pan.value = clamp(side, -1, 1) * 0.8;
+    src.connect(bp); bp.connect(g); g.connect(pan); pan.connect(this.bus); src.start(t, src.loopStart); src.stop(t + dur + 0.02);
+    if (size >= 1.5) this.blip(70, 36, 'sine', 0.3, 0.3 * a);
   }
 
   /** A bullet whistling past: a short high crack with a falling tail. */

@@ -23,50 +23,46 @@ export const SCHEMES = {
 export const VARIANTS = {
   hound: { fixed: {}, extras: [] },
   interceptor: {
-    fixed: { 3: [2.0, 1.9, 2.8, 0, 0, -4.5, 'accent'], 7: [11.5, 0.45, 2.3, 0, -0.3, -0.5, 'body'], 9: [0.5, 3.3, 1.5, 0, 2.35, 4.6, 'accent'] },
-    extras: [[0.4, 1.8, 1.4, 0, -1.2, 4.6, 'accent']],
+    fixed: { 3: [0, 0, -4.5, 2.0, 1.9, 2.8, 'accent'], 7: [0, -0.3, -0.5, 11.5, 0.45, 2.3, 'body'], 9: [0, 2.35, 4.6, 0.5, 3.3, 1.5, 'accent'] },
+    extras: [[0, -1.2, 4.6, 0.4, 1.8, 1.4, 'accent']],
   },
   ace: {
-    fixed: { 9: [0.4, 1.4, 1.4, 0, 1.4, 4.6, 'accent'] },
-    extras: [[0.4, 2.4, 1.5, -2.6, 1.7, 4.6, 'accent'], [0.4, 2.4, 1.5, 2.6, 1.7, 4.6, 'accent'], [1.2, 0.56, 3.25, -3.2, -0.3, -0.7, 'trim'], [1.2, 0.56, 3.25, 3.2, -0.3, -0.7, 'trim']],
+    fixed: { 9: [0, 1.4, 4.6, 0.4, 1.4, 1.4, 'accent'] },
+    extras: [[-2.6, 1.7, 4.6, 0.4, 2.4, 1.5, 'accent'], [2.6, 1.7, 4.6, 0.4, 2.4, 1.5, 'accent'], [-3.2, -0.3, -0.7, 1.2, 0.56, 3.25, 'trim'], [3.2, -0.3, -0.7, 1.2, 0.56, 3.25, 'trim']],
   },
 };
 const EXTRA_SLOTS = 4;
 const GLASS = 0xbfe9ff, SKIN = 0xf0c8a0, GOGGLES = 0x222a3a, HELMET = 0x6b4a2e, SCORCH = 0x2a2622;
 export const GUNS = [new THREE.Vector3(3.4, -0.3, -2.4), new THREE.Vector3(-3.4, -0.3, -2.4)];
 
-// The plane as data. Nose points toward -Z. [sx, sy, sz, x, y, z, color, roughness]
+// The plane as data. Nose points toward -Z. [x, y, z, sx, sy, sz, color, roughness]
 const FIXED = [
-  [2.4, 2.2, 5.2, 0, 0, -0.6, 'body'], [1.7, 1.7, 3.2, 0, 0.15, 3.4, 'body'], [1.1, 1.1, 1.4, 0, 0.35, 5.6, 'body'],
-  [2.0, 1.9, 1.5, 0, 0, -3.9, 'accent'],            // nose
-  [2.7, 2.5, 0.7, 0, 0, -3.2, 'trim'],              // cowl ring
-  [1.5, 0.8, 0.3, 0, 1.45, -1.85, GLASS, 0.1],      // windscreen (the cockpit is open so the pilot shows)
-  [0.9, 0.5, 0.9, 0, 1.3, 0.7, 'trim'],             // headrest
-  [11.5, 0.5, 3.2, 0, -0.3, -0.7, 'body'],          // main wing
-  [5.6, 0.4, 1.6, 0, 0.6, 4.6, 'body'], [0.5, 2.4, 1.6, 0, 1.9, 4.6, 'accent'],   // tail
-  [0.4, 0.4, 1.0, -1.45, -0.55, -2.2, 'trim'], [0.4, 0.4, 1.0, 1.45, -0.55, -2.2, 'trim'],   // exhaust stubs
+  [0, 0, -0.6, 2.4, 2.2, 5.2, 'body'], [0, 0.15, 3.4, 1.7, 1.7, 3.2, 'body'], [0, 0.35, 5.6, 1.1, 1.1, 1.4, 'body'],
+  [0, 0, -3.9, 2.0, 1.9, 1.5, 'accent'],            // nose
+  [0, 0, -3.2, 2.7, 2.5, 0.7, 'trim'],              // cowl ring
+  [0, 1.45, -1.85, 1.5, 0.8, 0.3, GLASS, 0.1],      // windscreen (the cockpit is open so the pilot shows)
+  [0, 1.3, 0.7, 0.9, 0.5, 0.9, 'trim'],             // headrest
+  [0, -0.3, -0.7, 11.5, 0.5, 3.2, 'body'],          // main wing
+  [0, 0.6, 4.6, 5.6, 0.4, 1.6, 'body'], [0, 1.9, 4.6, 0.5, 2.4, 1.6, 'accent'],   // tail
+  [-1.45, -0.55, -2.2, 0.4, 0.4, 1.0, 'trim'], [1.45, -0.55, -2.2, 0.4, 0.4, 1.0, 'trim'],   // exhaust stubs
 ];
-const PROP = [[0.8, 0.8, 0.7, 0, 0, 0], [0.45, 5.6, 0.2, 0, 0, 0], [5.6, 0.45, 0.2, 0, 0, 0]];
+const PROP = [[0, 0, 0, 0.8, 0.8, 0.7, 'trim'], [0, 0, 0, 0.45, 5.6, 0.2, 'trim'], [0, 0, 0, 5.6, 0.45, 0.2, 'trim']];
 // Hinged groups: a pivot on the plane, an axis, and the boxes hanging off it. `ctrl` names the angle that drives it.
 const HINGES = [
-  { pivot: [-4.6, -0.3, 0.9], axis: 'x', sign: 1, boxes: [[3.6, 0.3, 0.9, 0, 0, 0.45, 'trim']], ctrl: 'aileron' },
-  { pivot: [4.6, -0.3, 0.9], axis: 'x', sign: -1, boxes: [[3.6, 0.3, 0.9, 0, 0, 0.45, 'trim']], ctrl: 'aileron' },
-  { pivot: [0, 0.6, 5.4], axis: 'x', sign: 1, boxes: [[5.6, 0.3, 0.8, 0, 0, 0.4, 'trim']], ctrl: 'elevator' },
-  { pivot: [0, 1.9, 5.4], axis: 'y', sign: 1, boxes: [[0.35, 2.2, 0.8, 0, 0, 0.4, 'trim']], ctrl: 'rudder' },
+  { pivot: [-4.6, -0.3, 0.9], axis: 'x', sign: 1, boxes: [[0, 0, 0.45, 3.6, 0.3, 0.9, 'trim']], ctrl: 'aileron' },
+  { pivot: [4.6, -0.3, 0.9], axis: 'x', sign: -1, boxes: [[0, 0, 0.45, 3.6, 0.3, 0.9, 'trim']], ctrl: 'aileron' },
+  { pivot: [0, 0.6, 5.4], axis: 'x', sign: 1, boxes: [[0, 0, 0.4, 5.6, 0.3, 0.8, 'trim']], ctrl: 'elevator' },
+  { pivot: [0, 1.9, 5.4], axis: 'y', sign: 1, boxes: [[0, 0, 0.4, 0.35, 2.2, 0.8, 'trim']], ctrl: 'rudder' },
   // wingtips bend under g (and one can be shot off)
-  { pivot: [-5.75, -0.3, -0.9], axis: 'z', sign: -1, boxes: [[2.2, 0.5, 2.8, -1.1, 0, 0, 'accent']], ctrl: 'flex', tip: 0 },
-  { pivot: [5.75, -0.3, -0.9], axis: 'z', sign: 1, boxes: [[2.2, 0.5, 2.8, 1.1, 0, 0, 'accent']], ctrl: 'flex', tip: 1 },
+  { pivot: [-5.75, -0.3, -0.9], axis: 'z', sign: -1, boxes: [[-1.1, 0, 0, 2.2, 0.5, 2.8, 'accent']], ctrl: 'flex', tip: 0 },
+  { pivot: [5.75, -0.3, -0.9], axis: 'z', sign: 1, boxes: [[1.1, 0, 0, 2.2, 0.5, 2.8, 'accent']], ctrl: 'flex', tip: 1 },
   // landing gear folds outward and up under the wing once airborne
-  { pivot: [-2.2, -1.0, -1.4], axis: 'z', sign: -1, boxes: [[0.5, 1.0, 0.5, 0, -0.5, 0, 'trim'], [0.7, 1.1, 1.1, 0, -1.0, 0, 'trim']], ctrl: 'gear' },
-  { pivot: [2.2, -1.0, -1.4], axis: 'z', sign: 1, boxes: [[0.5, 1.0, 0.5, 0, -0.5, 0, 'trim'], [0.7, 1.1, 1.1, 0, -1.0, 0, 'trim']], ctrl: 'gear' },
+  { pivot: [-2.2, -1.0, -1.4], axis: 'z', sign: -1, boxes: [[0, -0.5, 0, 0.5, 1.0, 0.5, 'trim'], [0, -1.0, 0, 0.7, 1.1, 1.1, 'trim']], ctrl: 'gear' },
+  { pivot: [2.2, -1.0, -1.4], axis: 'z', sign: 1, boxes: [[0, -0.5, 0, 0.5, 1.0, 0.5, 'trim'], [0, -1.0, 0, 0.7, 1.1, 1.1, 'trim']], ctrl: 'gear' },
 ];
 // The pilot: shoulders, head, goggles and helmet, turned as one about the neck.
 const PILOT_PIVOT = new THREE.Vector3(0, 1.05, -0.55);
-const PILOT = [[0.95, 0.5, 0.7, 0, 0.1, 0, 'trim'], [0.8, 0.8, 0.8, 0, 0.62, 0, SKIN], [0.84, 0.22, 0.84, 0, 0.7, 0, GOGGLES], [0.86, 0.32, 0.86, 0, 0.95, 0, HELMET]];
-const FIXED_LOCALS = FIXED.map((b) => local(b[3], b[4], b[5], b[0], b[1], b[2]));
-const PROP_LOCALS = PROP.map((b) => local(b[3], b[4], b[5], b[0], b[1], b[2]));
-const HINGE_LOCALS = HINGES.map((h) => h.boxes.map((b) => local(b[3], b[4], b[5], b[0], b[1], b[2])));
-const PILOT_LOCALS = PILOT.map((b) => local(b[3], b[4], b[5], b[0], b[1], b[2]));
+const PILOT = [[0, 0.1, 0, 0.95, 0.5, 0.7, 'trim'], [0, 0.62, 0, 0.8, 0.8, 0.8, SKIN], [0, 0.7, 0, 0.84, 0.22, 0.84, GOGGLES], [0, 0.95, 0, 0.86, 0.32, 0.86, HELMET]];
 const HINGE_OFFSET = []; { let o = FIXED.length + PROP.length; for (const h of HINGES) { HINGE_OFFSET.push(o); o += h.boxes.length; } }
 const PILOT_OFFSET = FIXED.length + PROP.length + HINGES.reduce((n, h) => n + h.boxes.length, 0);
 const EXTRA_OFFSET = PILOT_OFFSET + PILOT.length;
@@ -85,16 +81,10 @@ export class Plane {
   constructor({ lit, glow, soft }, scheme, variant = 'hound') {
     this.boxes = lit; this.glow = glow; this.soft = soft; this.scheme = scheme;
     this.base = lit.alloc(PLANE_SLOTS);
-    this.fixed = FIXED; this.fixedLocals = FIXED_LOCALS; this.extras = []; this.extraLocals = [];
     // prop: spin. aileron/elevator/rudder: deflection. flex: wingtip bend. gear: fold angle (0 down). disc: blur alpha.
     // flame: 0..1 boost. fire: 0..1 damage fire. headYaw/headPitch/headRoll: where the pilot is looking.
     this.angles = { prop: 0, aileron: 0, elevator: 0, rudder: 0, flex: 0, gear: 0, disc: 0, flame: 0, fire: 0, headYaw: 0, headPitch: 0, headRoll: 0 };
     this.lostTip = -1;   // 0 or 1 once a wingtip has been shot off
-    let i = this.base;
-    for (const b of FIXED) { lit.color(i, typeof b[6] === 'string' ? scheme[b[6]] : b[6]); lit.scalar(i, b[7] ?? 0.6); i++; }
-    for (let k = 0; k < PROP.length; k++) { lit.color(i, scheme.trim); lit.scalar(i, 0.6); i++; }
-    for (const h of HINGES) for (const b of h.boxes) { lit.color(i, scheme[b[6]]); lit.scalar(i, 0.6); i++; }
-    for (const b of PILOT) { lit.color(i, typeof b[6] === 'string' ? scheme[b[6]] : b[6]); lit.scalar(i, 0.7); i++; }
     this.disc = soft ? soft.alloc() : -1;
     if (soft) soft.color(this.disc, scheme.trim);
     this.flames = glow ? glow.alloc(3) : -1;
@@ -107,19 +97,18 @@ export class Plane {
 
   /** Reshapes and repaints the plane: a silhouette from VARIANTS and a livery. Used when a bandit is re-issued. */
   setVariant(variant, scheme) {
-    const v = VARIANTS[variant] || VARIANTS.hound, b = this.boxes;
+    const v = VARIANTS[variant] || VARIANTS.hound, b = this.boxes, base = this.base;
     this.variant = variant; this.scheme = scheme;
+    // a part's colour is one of the scheme's names or a literal
+    const tint = (parts) => parts.map((p) => [p[0], p[1], p[2], p[3], p[4], p[5], typeof p[6] === 'string' ? scheme[p[6]] : p[6], p[7]]);
     this.fixed = FIXED.map((f, k) => v.fixed[k] || f);
-    this.fixedLocals = this.fixed.map((f, k) => v.fixed[k] ? local(f[3], f[4], f[5], f[0], f[1], f[2]) : FIXED_LOCALS[k]);
     this.extras = v.extras;
-    this.extraLocals = v.extras.map((e) => local(e[3], e[4], e[5], e[0], e[1], e[2]));
-    let i = this.base;
-    for (const f of this.fixed) { b.color(i, typeof f[6] === 'string' ? scheme[f[6]] : f[6]); b.scalar(i, f[7] ?? 0.6); i++; }
-    for (let k = 0; k < PROP.length; k++) { b.color(i, scheme.trim); b.scalar(i, 0.6); i++; }
-    for (const h of HINGES) for (const bx of h.boxes) { b.color(i, scheme[bx[6]]); b.scalar(i, 0.6); i++; }
-    for (const p of PILOT) { b.color(i, typeof p[6] === 'string' ? scheme[p[6]] : p[6]); b.scalar(i, 0.7); i++; }
-    this.extras.forEach((e, k) => { b.color(this.base + EXTRA_OFFSET + k, scheme[e[6]]); b.scalar(this.base + EXTRA_OFFSET + k, 0.6); });
-    b.hide(this.base + EXTRA_OFFSET + this.extras.length, EXTRA_SLOTS - this.extras.length);
+    this.fixedLocals = b.paint(base, tint(this.fixed), 0.6);
+    this.propLocals = b.paint(base + FIXED.length, tint(PROP), 0.6);
+    this.hingeLocals = HINGES.map((h, k) => b.paint(base + HINGE_OFFSET[k], tint(h.boxes), 0.6));
+    this.pilotLocals = b.paint(base + PILOT_OFFSET, tint(PILOT), 0.7);
+    this.extraLocals = b.paint(base + EXTRA_OFFSET, tint(this.extras), 0.6);
+    b.hide(base + EXTRA_OFFSET + this.extras.length, EXTRA_SLOTS - this.extras.length);
     if (this.soft) this.soft.color(this.disc, scheme.trim);
   }
 
@@ -139,17 +128,17 @@ export class Plane {
     b.place(this.base, this.fixedLocals, world);
     if (this.extras.length) b.place(this.base + EXTRA_OFFSET, this.extraLocals, world);
     hinge.compose(PROP_PIVOT, q.setFromAxisAngle(AXIS.z, a.prop), ONE);
-    b.place(this.base + FIXED.length, PROP_LOCALS, world2.multiplyMatrices(world, hinge));
+    b.place(this.base + FIXED.length, this.propLocals, world2.multiplyMatrices(world, hinge));
     for (let k = 0; k < HINGES.length; k++) {
       const h = HINGES[k];
       if (h.tip !== undefined && h.tip === this.lostTip) { b.hide(this.base + HINGE_OFFSET[k], h.boxes.length); continue; }
       hinge.compose(v.set(h.pivot[0], h.pivot[1], h.pivot[2]), q.setFromAxisAngle(AXIS[h.axis], a[h.ctrl] * h.sign), ONE);
-      b.place(this.base + HINGE_OFFSET[k], HINGE_LOCALS[k], world2.multiplyMatrices(world, hinge));
+      b.place(this.base + HINGE_OFFSET[k], this.hingeLocals[k], world2.multiplyMatrices(world, hinge));
     }
     // the pilot turns to look: yaw about the neck, then a nod, then a lean
     eul.set(a.headPitch, a.headYaw, a.headRoll, 'YXZ');
     hinge.compose(PILOT_PIVOT, q.setFromEuler(eul), ONE);
-    b.place(this.base + PILOT_OFFSET, PILOT_LOCALS, world2.multiplyMatrices(world, hinge));
+    b.place(this.base + PILOT_OFFSET, this.pilotLocals, world2.multiplyMatrices(world, hinge));
     if (this.soft) {
       this.soft.scalar(this.disc, softParam(a.disc));
       this.soft.matrix(this.disc, world2.multiplyMatrices(world, DISC_LOCAL));

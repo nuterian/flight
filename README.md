@@ -73,7 +73,7 @@ note is generated in code.
 - **World.** A composed heightfield (warped coastlines, ridged mountains, hills) is flooded into lakes, drained into
   rivers that carve valleys, and quantized into terraces on a 7-unit grid (designed at 5 and scaled up 1.4x, so the
   land reads large against the trees and the plane). Water is a
-  six-wave analytic surface with a real planar reflection. Per-block tone, strata, grass fringes, moss and lichen
+  six-wave analytic surface with a real planar reflection of the sky, land and clouds. Per-block tone, strata, grass fringes, moss and lichen
   are done in the fragment shader.
 - **Everything is a box.** Every voxel in the game is an instance of one unit cube in a handful of batches: lit,
   palm fronds (with wind and downwash), glow (tracers, flames, the sun) and soft (prop discs, splash rings). A plane is a table of 30-odd boxes placed under its matrix each frame, control surfaces, flexing
@@ -87,8 +87,10 @@ note is generated in code.
   kicks with the guns, a slow-motion orbit on the last kill of a wave, wreckage that tumbles and smokes, damage
   states, sea spray and dust on low passes, birds, gulls, sheep, wolves, villagers, and a title built from riveted
   steel blocks.
-- **Sound.** Procedural Web Audio: engine pitched to speed, wind, guns, hits, bullets cracking past, an
-  interceptor's dive siren, the airship's engines as you close in, a heartbeat at low hull, explosions with
+- **Sound.** Procedural Web Audio: engine pitched to speed, wind that roughens under g, a low rush of air when
+  the ground or a cliff is close, the engines of the nearest bandits following them round you with Doppler and
+  stereo, a whoosh when anything big goes past (a bandit, the airship, the portal, a balloon, a landmark, a palm
+  canopy), guns, hits, bullets cracking past, an interceptor's dive siren, the airship's engines as you close in, a heartbeat at low hull, explosions with
   sub-bass, and two themes ("Dogfight" and "Coral Isles") played live by a sequencer on modelled instruments,
   including a Karplus-Strong string in an AudioWorklet, full on the title and ducked under the engine in play.
 

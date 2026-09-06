@@ -8,18 +8,16 @@ import { groundAt, isWaterAt, BOUNDS } from './terrain.js';
 import { BULLET_SPEED } from './bullets.js';
 
 const CREAM = 0xf3e6c8, RED = 0xc7402e, DARK = 0x2b2f3a, BRASS = 0xd9a441, GLASS = 0xffd27a;
-// [sx, sy, sz, x, y, z, color]. Nose toward -Z.
-const RINGS = [[7, 5.5, 12, 0, 0, -42], [12, 9.5, 12, 0, 0, -30], [17, 13.5, 12, 0, 0, -18], [20, 16, 12, 0, 0, -6], [19, 15, 12, 0, 0, 6], [16, 12.5, 12, 0, 0, 18], [11, 8.5, 12, 0, 0, 30], [6, 4.5, 10, 0, 0, 41]];
+// [x, y, z, sx, sy, sz, color]. Nose toward -Z.
+const RINGS = [[0, 0, -42, 7, 5.5, 12], [0, 0, -30, 12, 9.5, 12], [0, 0, -18, 17, 13.5, 12], [0, 0, -6, 20, 16, 12], [0, 0, 6, 19, 15, 12], [0, 0, 18, 16, 12.5, 12], [0, 0, 30, 11, 8.5, 12], [0, 0, 41, 6, 4.5, 10]];
 const PARTS = [
   ...RINGS.map((r, k) => [...r, k % 2 ? RED : CREAM]),
-  [1.2, 11, 9, 0, 8, 38, RED], [1.2, 11, 9, 0, -8, 38, RED], [11, 1.2, 9, 8, 0, 38, RED], [11, 1.2, 9, -8, 0, 38, RED],   // fins
-  [7, 4.5, 16, 0, -10, 2, DARK], [5, 1.2, 12, 0, -12.6, 2, BRASS],                                                       // gondola and keel
-  [3, 3, 6, 9.5, -6, 8, DARK], [3, 3, 6, -9.5, -6, 8, DARK],                                                             // engine pods
-  [3, 2, 3, 0, 9, -12, BRASS], [3, 2, 3, 0, -8, 24, BRASS],                                                              // turret bases
+  [0, 8, 38, 1.2, 11, 9, RED], [0, -8, 38, 1.2, 11, 9, RED], [8, 0, 38, 11, 1.2, 9, RED], [-8, 0, 38, 11, 1.2, 9, RED],   // fins
+  [0, -10, 2, 7, 4.5, 16, DARK], [0, -12.6, 2, 5, 1.2, 12, BRASS],                                                       // gondola and keel
+  [9.5, -6, 8, 3, 3, 6, DARK], [-9.5, -6, 8, 3, 3, 6, DARK],                                                             // engine pods
+  [0, 9, -12, 3, 2, 3, BRASS], [0, -8, 24, 3, 2, 3, BRASS],                                                              // turret bases
 ];
-const PART_LOCALS = PARTS.map((b) => local(b[3], b[4], b[5], b[0], b[1], b[2]));
-const WINDOWS = [[4.2, 1.2, 0.4, 0, -9.6, -6.3], [4.2, 1.2, 0.4, 0, -9.6, 10.3]];
-const WINDOW_LOCALS = WINDOWS.map((b) => local(b[3], b[4], b[5], b[0], b[1], b[2]));
+const WINDOWS = [[0, -9.6, -6.3, 4.2, 1.2, 0.4, GLASS], [0, -9.6, 10.3, 4.2, 1.2, 0.4, GLASS]];
 const PROP_PIVOTS = [new THREE.Vector3(9.5, -6, 4.8), new THREE.Vector3(-9.5, -6, 4.8)];
 const PROP_LOCAL = local(0, 0, 0, 0.35, 4.6, 0.25);
 const TURRETS = [{ pivot: new THREE.Vector3(0, 10.5, -12), up: 1 }, { pivot: new THREE.Vector3(0, -9.5, 24), up: -1 }];
@@ -41,10 +39,9 @@ export class Airship {
   constructor(lit, glow, effects) {
     this.lit = lit; this.glow = glow; this.effects = effects;
     this.base = lit.alloc(SLOTS);
-    PARTS.forEach((b, k) => { lit.color(this.base + k, b[6]); lit.scalar(this.base + k, 0.75); });
+    this.partLocals = lit.paint(this.base, PARTS, 0.75);
     for (let k = 0; k < PROP_PIVOTS.length + TURRETS.length; k++) { lit.color(this.base + PARTS.length + k, k < 2 ? DARK : BRASS); lit.scalar(this.base + PARTS.length + k, 0.6); }
-    this.windows = glow.alloc(WINDOWS.length);
-    for (let k = 0; k < WINDOWS.length; k++) { glow.color(this.windows + k, GLASS); glow.scalar(this.windows + k, 1.5); }
+    this.windows = glow.group(WINDOWS, 1.5);
     this.pos = new THREE.Vector3(); this.velocity = new THREE.Vector3(); this.quat = new THREE.Quaternion();
     this.heading = 0; this.speed = 14; this.alive = false; this.falling = 0; this.hp = 1; this.maxHp = 1;
     this.team = 1; this.prop = 0; this.smoke = 0; this.boom = 0;
@@ -87,7 +84,7 @@ export class Airship {
     return false;
   }
 
-  hide() { this.lit.hide(this.base, SLOTS); this.glow.hide(this.windows, WINDOWS.length); this.alive = false; for (const t of this.targets) t.alive = false; }
+  hide() { this.lit.hide(this.base, SLOTS); this.glow.hide(this.windows.start, WINDOWS.length); this.alive = false; for (const t of this.targets) t.alive = false; }
 
   /** Slow flight inside the walls, turrets tracking the player, smoke when hurt, and the fall. Returns true the
    *  step it hits the ground, so the game can register the kill. */
@@ -171,7 +168,7 @@ export class Airship {
     e.set(this.tilt, this.heading, Math.sin(this.roll) * (this.falling > 0 ? 0.5 : 0), 'YXZ');
     this.quat.setFromEuler(e);
     this.matrix.compose(this.pos, this.quat, ONE);
-    this.lit.place(this.base, PART_LOCALS, this.matrix);
+    this.lit.place(this.base, this.partLocals, this.matrix);
     for (let k = 0; k < PROP_PIVOTS.length; k++) {
       m.compose(PROP_PIVOTS[k], q.setFromAxisAngle(NEG_Z, this.prop + k * 1.3), ONE).multiply(PROP_LOCAL);
       this.lit.matrix(this.base + PARTS.length + k, m2.multiplyMatrices(this.matrix, m));
@@ -182,7 +179,7 @@ export class Airship {
       m.compose(TURRETS[k].pivot, q, ONE).multiply(BARREL_LOCAL);
       this.lit.matrix(this.base + PARTS.length + PROP_PIVOTS.length + k, m2.multiplyMatrices(this.matrix, m));
     }
-    for (let k = 0; k < WINDOWS.length; k++) this.glow.matrix(this.windows + k, m2.multiplyMatrices(this.matrix, WINDOW_LOCALS[k]));
+    this.glow.place(this.windows.start, this.windows.locals, this.matrix);
     // the hulls ride along: the gondola under the middle, the armour along the envelope
     this.gondola.pos.set(0, -11, 2).applyQuaternion(this.quat).add(this.pos);
     for (let k = 0; k < TURRETS.length; k++) this.turretHulls[k].pos.copy(TURRETS[k].pivot).applyQuaternion(this.quat).add(this.pos);

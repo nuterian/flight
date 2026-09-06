@@ -58,7 +58,7 @@ export function buildLandmarks(lit, glow) {
   ensureGrid();
   const box = (x, y, z, sx, sy, sz, hex, rough = 0.85) => { const i = lit.alloc(); lit.color(i, hex); lit.scalar(i, rough); lit.matrix(i, m.compose(p.set(x, y, z), q.identity(), s.set(sx, sy, sz))); return i; };
   const tilted = (x, y, z, sx, sy, sz, hex, rot) => { const i = lit.alloc(); lit.color(i, hex); lit.scalar(i, 0.85); lit.matrix(i, m.compose(p.set(x, y, z), rot, s.set(sx, sy, sz))); return i; };
-  const list = [];
+  const list = [], obstacles = [];   // obstacles: { x, y, z, r } the game sounds a rush of air for when passed inside r
 
   // --- the lighthouse: a banded tower, a dark gallery, the lamp, and one long beam through it that sweeps
   const head = findHeadland();
@@ -75,6 +75,7 @@ export function buildLandmarks(lit, glow) {
     beam = glow.alloc(); glow.color(beam, 0xfff1c0); glow.scalar(beam, 1.1);
     lamp = new THREE.Vector3(x, top + 2.4, z);
     list.push({ id: 'lighthouse', pos: lamp, radius: 50, name: 'LIGHTHOUSE' });
+    obstacles.push({ x, y: y + 10, z, r: 16 });
   }
 
   // --- the shipwreck: a hull broken in two on the reef, ribs showing, the mast down with a rag of sail
@@ -92,6 +93,7 @@ export function buildLandmarks(lit, glow) {
     tilted(x + 2.5, 6.5, z + 6, 0.25, 5, 5, 0xe9dccb, mastRot);
     box(x - 4, 0.3, z + 5, 1.6, 1.6, 1.6, 0x7a5a3a); box(x + 6, 0.3, z - 3, 1.6, 1.6, 1.6, 0x7a5a3a);   // barrels adrift
     list.push({ id: 'wreck', pos: new THREE.Vector3(x, 0, z), radius: 40, low: 30, name: 'SHIPWRECK' });
+    obstacles.push({ x: x + 2, y: 6, z: z + 4, r: 11 });
   }
 
   // --- the stone ring: eight pillars on the highland, a gap between each you can fly through
@@ -103,6 +105,7 @@ export function buildLandmarks(lit, glow) {
       const base = cellTop(Math.round(px / CELL), Math.round(pz / CELL));
       box(px, base + 8, pz, 3.2, 16, 3.2, k % 2 ? 0x8d8f93 : 0x7c7e83, 0.9);
       box(px, base + 16.6, pz, 4, 1.4, 4, 0x6a6d74, 0.9);
+      obstacles.push({ x: px, y: base + 9, z: pz, r: 12 });   // threading the ring hears the pillars either side
     }
     box(x, y + 0.8, z, 6, 1.6, 6, 0x6a6d74, 0.9);
     list.push({ id: 'pillars', pos: new THREE.Vector3(x, y, z), radius: 11, ring: [y + 2, y + 17], name: 'STONE RING' });
@@ -128,7 +131,7 @@ export function buildLandmarks(lit, glow) {
     return null;
   };
   console.info(`landmarks: ${list.map((l) => `${l.id} (${Math.round(l.pos.x)}, ${Math.round(l.pos.z)})`).join(', ')}`);
-  return { list, animate, check };
+  return { list, animate, check, obstacles };
 }
 
 /** Arenas: named parts of the map a wave's portal can open over. Found once from the terrain. */

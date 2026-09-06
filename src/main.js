@@ -1,7 +1,6 @@
 import * as THREE from 'three/webgpu';
-import { pass, mrt, output, emissive, vec2, vec3, vec4, float, screenUV, smoothstep, mix, luminance, color, uniform, Fn, If, Loop, length } from 'three/tsl';
-import { bloom } from 'three/addons/tsl/display/BloomNode.js';
-import { dof } from 'three/addons/tsl/display/DepthOfFieldNode.js';
+import { pass, mrt, output, emissive, vec2, vec3, vec4, float, screenUV, smoothstep, mix, luminance, color, Fn, If, Loop, length } from 'three/tsl';
+import { gaussianBlur } from 'three/addons/tsl/display/GaussianBlurNode.js';
 import { createWorld } from './world.js';
 import { Boxes } from './boxes.js';
 import { Input, isTouchDevice } from './input.js';
@@ -38,29 +37,35 @@ async function boot() {
   // Two batches draw every box in the game: lit (props, planes, particles) and glow (tracers, flashes, the sun).
   const lit = new Boxes(scene, 12000);
   const glow = new Boxes(scene, 1400, { glow: true });
-  const soft = new Boxes(scene, 1800, { soft: true });   // translucent discs, rings and strips: prop blur, splashes, waterfalls
-  const world = createWorld(scene, { mobile, lit, glow, soft });
+  const soft = new Boxes(scene, 64, { soft: true });     // translucent discs and rings: prop blur, splashes, the vapour cone
+  const world = createWorld(scene, { mobile, lit, glow, soft, camera });
   world.setTimeOfDay(['morning', 'noon', 'golden'][dailySeed() % 3]);   // the title wears today's light
 
-  // Post-processing: scene pass with an emissive MRT target so only tracers, flashes and the sun bloom.
+  // Post-processing: scene pass with an emissive MRT target so only tracers, flashes and the sun glow.
   const scenePass = pass(scene, camera);
-  // Bloom sees the emissive channel plus whatever is genuinely bright in the lit scene (snow, sunlit cloud tops,
-  // glints), so light glows the way it does in the poster while ordinary terrain stays crisp.
+  // The glow sees the emissive channel plus whatever is genuinely bright in the lit scene (snow, sunlit cloud tops,
+  // glints), so light glows the way it does in the poster while ordinary terrain stays crisp. The knee that keeps
+  // ordinary colour out of it is applied here, once, so the blurs below read a channel holding only what glows.
   const bright = output.rgb.mul(smoothstep(1.6, 3.2, luminance(output.rgb))).mul(0.7);
-  scenePass.setMRT(mrt({ output, emissive: vec4(emissive.rgb.add(bright), 1) }));
+  const shine = emissive.rgb.add(bright);
+  scenePass.setMRT(mrt({ output, emissive: vec4(shine.mul(smoothstep(1.2, 1.21, luminance(shine))), 1) }));
   const scenePassColor = scenePass.getTextureNode('output');
-  const bloomPass = bloom(scenePass.getTextureNode('emissive'), mobile ? 0.45 : 0.55, 0.35, 1.2);
-  // Sun shafts: a short radial smear of the bloom toward the sun's screen position. The bloom already holds the
+  // The halo: a tight blur at quarter resolution and a wide one at a sixteenth, weighted like the five-mip
+  // pyramid they replace, in four render passes instead of twelve.
+  const haloTex = scenePass.getTextureNode('emissive'), haloScale = mobile ? 0.82 : 1;
+  const haloWide = gaussianBlur(haloTex, null, 5, { resolutionScale: 1 / 16 });
+  const halo = gaussianBlur(haloTex, null, 4, { resolutionScale: 0.25 }).mul(0.75 * haloScale).add(haloWide.mul(0.5 * haloScale));
+  // Sun shafts: a short radial smear of the wide glow toward the sun's screen position. The glow already holds the
   // sun disc masked by the clouds, so beams appear between the slabs. Skipped entirely when the sun is off screen.
   const sun = world.sunScreen;
-  const bloomTex = bloomPass.getTextureNode();
+  const shaftTex = haloWide.getTextureNode();
   const shafts = mobile ? vec3(0) : Fn(() => {
     const col = vec3(0).toVar();
     If(sun.strength.greaterThan(0.001), () => {
       const stepv = sun.uv.sub(screenUV).mul(0.8 / 14);
       const p = screenUV.toVar(), w = float(1).toVar();
-      Loop(14, () => { p.addAssign(stepv); col.addAssign(bloomTex.sample(p).rgb.mul(w)); w.mulAssign(0.85); });
-      col.mulAssign(sun.strength.mul(0.12));
+      Loop(14, () => { p.addAssign(stepv); col.addAssign(shaftTex.sample(p).rgb.mul(w)); w.mulAssign(0.85); });
+      col.mulAssign(sun.strength.mul(0.2));
     });
     return col;
   })();
@@ -94,9 +99,14 @@ async function boot() {
     const vignette = smoothstep(0.45, 1.25, screenUV.sub(0.5).length()).mul(0.22);
     return vec4(rgb.mul(float(1).sub(vignette)), 1);
   };
-  const playGraph = grade(smeared.add(bloomPass).add(vec4(shafts, 0)));
-  // Title screen only: a shallow depth of field on the cinematic orbit. Off in play, never on mobile.
-  const titleGraph = mobile ? null : grade(dof(scenePassColor.add(bloomPass), scenePass.getViewZNode(), uniform(420), uniform(260), 2.4).add(vec4(shafts, 0)));
+  const playGraph = grade(smeared.add(halo).add(vec4(shafts, 0)));
+  // Title screen only: a shallow depth of field on the cinematic orbit, as a quarter-resolution blur mixed in by
+  // depth, sharp at the letters and soft on the isles behind them. Two passes. Off in play, never on mobile.
+  const titleGraph = mobile ? null : (() => {
+    const soft = gaussianBlur(scenePassColor, null, 2, { resolutionScale: 0.25 });
+    const lens = mix(scenePassColor, soft, smoothstep(float(450), float(1300), scenePass.getViewZNode().negate()));
+    return grade(lens.add(halo).add(vec4(shafts, 0)));
+  })();
   const pipeline = new THREE.RenderPipeline(renderer);
   pipeline.outputNode = playGraph;
   let titleLens = false;
@@ -177,7 +187,7 @@ async function boot() {
         if (input.mode !== 'tilt') {
           // Motion permission can only hang on a broken browser; never let it hold the game hostage.
           const ok = await Promise.race([input.enableMotion(), new Promise((r) => setTimeout(() => r(false), 4000))]);
-          if (!ok) input.useStickFallback();
+          if (!ok) { input.useStickFallback(); hud.notice('Tilt unavailable · thumb the left side to steer'); }
         }
         hud.showTouch(true);
         $('btn-recenter').classList.toggle('hidden', input.mode !== 'tilt');
@@ -202,14 +212,21 @@ async function boot() {
   $('btn-quit').addEventListener('pointerdown', (e) => { e.preventDefault(); e.stopPropagation(); abortRun(); });
   input.onStart = () => startGame(game.state === 'gameover' ? lastMode : 'free');
   input.onDaily = () => { if (game.state === 'title' || game.state === 'gameover') startGame('daily'); };
-  $('btn-daily').addEventListener('pointerdown', (e) => { e.preventDefault(); e.stopPropagation(); startGame('daily'); });
+  // Runs start on click, not pointerdown: iPhones fire pointerdown from touchstart, and WebKit only shows the motion
+  // permission prompt from a click-like gesture, so a tilt request made there fails silently and you get the stick.
+  const startsFrom = (el, mode) => {
+    el.addEventListener('pointerdown', (e) => { if (!e.target.closest('button, #medals')) e.preventDefault(); });
+    el.addEventListener('click', (e) => { if (e.target.closest('button, #medals')) return; e.preventDefault(); startGame(mode()); });
+  };
+  $('btn-daily').addEventListener('pointerdown', (e) => { e.stopPropagation(); });
+  $('btn-daily').addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); startGame('daily'); });
   $('btn-share').addEventListener('pointerdown', (e) => { e.preventDefault(); e.stopPropagation(); hud.copyResult(); });
   $('medals').addEventListener('pointerdown', (e) => { e.stopPropagation(); });
   hud.showMute(game.audio.muted);
   input.onMute = () => hud.showMute(game.audio.toggleMute());
   $('btn-mute').addEventListener('pointerdown', (e) => { e.preventDefault(); e.stopPropagation(); input.onMute(); });
-  $('title').addEventListener('pointerdown', (e) => { e.preventDefault(); startGame('free'); });
-  $('gameover').addEventListener('pointerdown', (e) => { e.preventDefault(); startGame(lastMode); });
+  startsFrom($('title'), () => 'free');
+  startsFrom($('gameover'), () => lastMode);
 
   addEventListener('resize', () => {
     if (innerWidth === 0 || innerHeight === 0) return; // hidden tab / backgrounded pane

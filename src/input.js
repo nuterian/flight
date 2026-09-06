@@ -72,7 +72,7 @@ export class Input {
         if (!settled) { settled = true; this.mode = 'tilt'; setTimeout(() => this.recenter(), 250); resolve(true); }
       };
       window.addEventListener('devicemotion', handler);
-      setTimeout(() => { if (!settled) { settled = true; window.removeEventListener('devicemotion', handler); resolve(false); } }, 1200);
+      setTimeout(() => { if (!settled) { settled = true; window.removeEventListener('devicemotion', handler); resolve(false); } }, 2000);
     });
   }
 

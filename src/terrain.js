@@ -250,7 +250,6 @@ export function cellKind(i, j) { ensureGrid(); return inGrid(i, j) ? KINDS[idx(i
 /** Surface height of lake or river water over a cell, or -1 when there is none (the sea is level 0). */
 export function cellWater(i, j) { ensureGrid(); return inGrid(i, j) ? WATER[idx(i, j)] : -1; }
 export function cellTop(i, j) { return levelTop(levelAtCell(i, j)); }
-export function mountainAt(i, j) { ensureGrid(); return inGrid(i, j) ? M[idx(i, j)] : 0; }
 
 /** Walkable ground height under (x, z): the terrace top, or the water surface over sea, lake or river. */
 export function groundAt(x, z) {
