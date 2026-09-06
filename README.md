@@ -42,6 +42,12 @@ wave 6) barrel-rolls when you get on its tail and comes straight back for a seco
 **airship** drifts in: a long two-tone envelope with two turrets that each cover one side of it. The envelope
 shrugs bullets off; hit the gondola underneath, from below or the side, and the wave ends when it falls.
 
+Each run flies under one of three lights (morning, high noon, golden hour; the daily fixes its own), every wave's
+portal opens over a different part of the map (the lake, the fjord, the high peaks, the village bay, the open sea)
+and the fight drifts there, and three landmarks are worth finding for a bonus and a medal: a lighthouse on a
+headland whose beam sweeps the sea, a shipwreck on a reef, and a ring of stone pillars in the highlands you can
+thread.
+
 Bandits arrive through a portal each wave and come in bigger packs. They hunt in passes: after a pass, or after
 sitting on your tail for a few seconds, a bandit breaks off and cruises about before coming back, and only part of
 the pack hunts you at once, so there is always one showing you its tail. Quick kills chain into combos. Stay inside
@@ -94,6 +100,7 @@ note is generated in code.
 | `src/boxes.js`, `src/plane.js` | the instanced box batches and the plane as data |
 | `src/aircraft.js`, `src/ai.js`, `src/bullets.js` | flight model, bandit brains, tracers with aim assist |
 | `src/airship.js` | the fifth-wave airship: envelope, turrets, gondola, the fall |
+| `src/landmarks.js` | the lighthouse, the wreck and the stone ring, and the arenas, all found from the terrain |
 | `src/game.js`, `src/portal.js` | waves, scoring, damage, camera, the arrival portal |
 | `src/daily.js`, `src/medals.js` | the seeded daily flight and the share line, the medal list and its storage |
 | `src/effects.js`, `src/trails.js` | particles, wreckage, vapor ribbons and wakes |

@@ -42,6 +42,8 @@ export class Game {
 
     this.pack = { hunting: 0, max: 1 };   // how many bandits are hunting the player right now, and how many may
     this.assist = { radius: 0, turn: 0, cone: 0.08, range: 380 };   // aim help for the player's guns, generous early
+    this.arenaOrder = []; this.arena = null;                          // where this wave's portal opened
+    this.found = new Set();                                           // landmarks found this run
     this.medals = new Medals();
     this.daily = false; this.rng = Math.random;   // the daily flight swaps in a seeded generator for the run's layout
     this.player = new Aircraft(new Plane(batches, SCHEMES.player), PLAYER_STATS, 0);
@@ -79,6 +81,7 @@ export class Game {
     this.shots = 0; this.hits = 0; this.bestCombo = 0; this.streak = 0; this.bestStreak = 0; this.aloft = 0;
     this.waveShots = 0; this.waveHits = 0; this.loopAcc = 0; this.loopT = 0; this.loopUp = false; this.loopDown = false;
     this.runMedals = []; this.newMedals = []; this.log = []; this.cushioned = 0; this.turretDamage = 0;
+    this.found = new Set(); this.arenaOrder = []; this.arena = null;
     if (this.portal) this.portal.hide();
     if (this.airship) this.airship.hide();
     if (this.hud) this.hud.resetScore();
@@ -93,6 +96,8 @@ export class Game {
     this.resetRun();
     this.daily = mode === 'daily';
     this.rng = this.daily ? mulberry32(dailySeed(todayKey())) : Math.random;
+    // the light for this run: the day picks its own, free play draws one
+    if (this.world.setTimeOfDay) this.world.setTimeOfDay(['morning', 'noon', 'golden'][Math.floor(this.rng() * 3)]);
     if (this.daily) {
       // the day decides where you begin: somewhere on a ring around the isles, pointed roughly at them
       const a = this.rng() * TWO_PI, r = 650 + this.rng() * 250;
@@ -149,10 +154,23 @@ export class Game {
     // until a slot frees, so there is always a bandit showing you its tail and never a whole wave on yours.
     this.pack.max = Math.min(count, 1 + Math.floor(this.wave / 3));
     this.hud.banner(`WAVE ${this.wave}`);
-    // A portal opens ahead-ish of the player and the bandits fly out of it one after another, head-on.
-    const baseAngle = Math.atan2(this.player.forward.x, this.player.forward.z);
-    const a = baseAngle + this.r(-0.7, 0.7), r = this.r(600, 800);
-    tv.set(this.player.pos.x + Math.sin(a) * r, 0, this.player.pos.z + Math.cos(a) * r);
+    // The portal opens over this wave's arena: a different part of the map each wave, drawn from a shuffled
+    // order so no two waves in a row share one. If the arena is far, the portal opens on the way there and the
+    // bandits' cruising drifts the fight over to it. The bandits fly out of it one after another, head-on.
+    const arena = this.arena = this.nextArena();
+    const p = this.player;
+    if (arena) {
+      tv.set(arena.x - p.pos.x, 0, arena.z - p.pos.z);
+      const far = tv.length();
+      if (far > 900) tv.multiplyScalar(900 / far);
+      tv.x += p.pos.x + this.r(-60, 60); tv.z += p.pos.z + this.r(-60, 60);
+      if (far < 250) { const a = Math.atan2(p.forward.x, p.forward.z) + this.r(-0.7, 0.7); tv.set(p.pos.x + Math.sin(a) * 600, 0, p.pos.z + Math.cos(a) * 600); }
+      this.hud.kill(`PORTAL OVER ${arena.name}`);
+    } else {
+      const baseAngle = Math.atan2(p.forward.x, p.forward.z);
+      const a = baseAngle + this.r(-0.7, 0.7), r = this.r(600, 800);
+      tv.set(p.pos.x + Math.sin(a) * r, 0, p.pos.z + Math.cos(a) * r);
+    }
     const lim = BOUNDS.half - 160;
     tv.x = clamp(tv.x, -lim, lim); tv.z = clamp(tv.z, -lim, lim);
     tv.y = clamp(this.r(200, 320), groundAt(tv.x, tv.z) + 130, 420);
@@ -180,6 +198,7 @@ export class Game {
       }
       ac.plane.setVariant(type, scheme);
       e.brain = new EnemyBrain(ac, sk, type);
+      e.brain.arena = arena;
       e.pending = 1.2 + i * 0.3;
     }
     if (boss) {
@@ -190,6 +209,29 @@ export class Game {
       this.airship.spawn(from, this.player.pos, clamp(this.player.pos.y + 60, 220, 360), 140 + this.wave * 12);   // 18 gondola hits on wave 5, 24 on wave 10
       this.hud.kill('AIRSHIP · HIT THE GONDOLA');
     }
+  }
+
+  /** The next arena in this run's shuffled order (reshuffled when it runs out, never repeating the last one). */
+  nextArena() {
+    const arenas = this.world.arenas || [];
+    if (!arenas.length) return null;
+    if (!this.arenaOrder.length) {
+      const order = arenas.map((_, i) => i);
+      for (let i = order.length - 1; i > 0; i--) { const j = Math.floor(this.rng() * (i + 1)); [order[i], order[j]] = [order[j], order[i]]; }
+      if (this.arena && arenas[order[0]] === this.arena && order.length > 1) order.push(order.shift());
+      this.arenaOrder = order;
+    }
+    return arenas[this.arenaOrder.shift()];
+  }
+
+  /** A landmark found: a bonus once a run, a medal the first time, and a line in the feed every time. */
+  foundLandmark(l) {
+    this.found.add(l.id);
+    this.addScore(500);
+    this.hud.kill(`${l.name} FOUND  +500`);
+    this.hud.bump('score');
+    this.audio.kill(2);
+    this.earn(l.id);
   }
 
   /** The airship's turrets shoot through the bandits' pool. */
@@ -442,6 +484,7 @@ export class Game {
         }
       }
       this.collectTargets();
+      if (this.world.landmarks) { const l = this.world.landmarks.check(p.pos, this.found); if (l) this.foundLandmark(l); }
       p.lookTarget = this.nearestEnemy(400);
       p.update(dt);
       this.shedTip(p);
@@ -625,8 +668,8 @@ export class Game {
       isBest = !prev || this.score > prev.best;
       if (isBest) saveDailyBest({ date: key, best: this.score, waves: this.wave, kills: this.kills });
       this.hud.daily(todayLabel(), loadDailyBest(key));
-      const wings = MEDALS.filter((m) => m.wave && this.wave >= m.wave).length, secretCount = MEDALS.filter((m) => m.secret).length;
-      const secrets = this.runMedals.filter((id) => byId(id).secret).length;
+      const wings = MEDALS.filter((m) => m.wave && this.wave >= m.wave).length, secretCount = MEDALS.filter((m) => !m.wave).length;
+      const secrets = this.runMedals.filter((id) => !byId(id).wave).length;
       share = shareLine({ date: key, wave: this.wave, kills: this.kills, score: this.score, wings, secrets, secretCount });
     }
     // the medal line: the newest medal if one was earned, else the run's highest, else the next one to aim for

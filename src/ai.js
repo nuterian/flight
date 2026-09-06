@@ -54,10 +54,15 @@ export class EnemyBrain {
     this.pickGoal(player);
   }
 
-  /** A loose waypoint on this bandit's side of you, a few hundred units out, at a safe height inside the walls. */
+  /** A loose waypoint on this bandit's side of you, a few hundred units out, at a safe height inside the walls.
+   *  While the wave's arena is far off, the waypoint leans that way instead, so the fight drifts over to it. */
   pickGoal(player) {
     const ac = this.ac, g = this.goal;
-    const bearing = Math.atan2(ac.pos.x - player.pos.x, ac.pos.z - player.pos.z) + rnd(-1.2, 1.2), r = rnd(240, 460);
+    let bearing = Math.atan2(ac.pos.x - player.pos.x, ac.pos.z - player.pos.z);
+    const arena = this.arena;
+    if (arena && Math.hypot(arena.x - player.pos.x, arena.z - player.pos.z) > 320) bearing = Math.atan2(arena.x - player.pos.x, arena.z - player.pos.z);
+    bearing += rnd(-1.2, 1.2);
+    const r = rnd(240, 460);
     g.set(player.pos.x + Math.sin(bearing) * r, 0, player.pos.z + Math.cos(bearing) * r);
     const lim = BOUNDS.half - 220;
     g.x = clamp(g.x, -lim, lim); g.z = clamp(g.z, -lim, lim);

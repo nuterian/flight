@@ -10,6 +10,9 @@ export const MEDALS = [
   { id: 'wavetop', name: 'Wavetop', hint: 'A kill from under 8 units altitude', secret: true, color: '#2fd1a0' },
   { id: 'marksman', name: 'Marksman', hint: 'A wave with every shot a hit', secret: true, color: '#2fd1a0' },
   { id: 'loop', name: 'Loop the loop', hint: 'A full loop without firing', secret: true, color: '#2fd1a0' },
+  { id: 'lighthouse', name: 'Keeper', hint: 'Find the lighthouse', landmark: true, color: '#ffd166' },
+  { id: 'wreck', name: 'Salvage', hint: 'Find the shipwreck', landmark: true, color: '#ffd166' },
+  { id: 'pillars', name: 'Needle', hint: 'Thread the stone ring', landmark: true, color: '#ffd166' },
 ];
 export const byId = (id) => MEDALS.find((m) => m.id === id);
 

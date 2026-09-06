@@ -6,6 +6,7 @@ import {
 import { ensureGrid, heightAt, levelAtCell, cellKind, cellWater, cellTop, levelTop, waterfalls, isSeaAt, KIND, N as HALF_CELLS, CELL, BOUNDS } from './terrain.js';
 import { Boxes, local, softParam, STRIP } from './boxes.js';
 import { Trails } from './trails.js';
+import { buildLandmarks, findArenas } from './landmarks.js';
 
 // Bold, saturated storybook palette.
 export const PALETTE = {
@@ -13,7 +14,14 @@ export const PALETTE = {
   sky: 0x2f7fe6, horizon: 0xbfe0ff, fogColor: 0xbfe0ff, cloud: 0xffffff, sunGlow: 0xffc27a,
   trunk: 0xb8743d, leaf: 0x3fc45f, leafDark: 0x2ea24d,
 };
-export const SUN_DIR = new THREE.Vector3(0.5, 0.7, 0.5).normalize();
+export const SUN_DIR = new THREE.Vector3(0.5, 0.7, 0.5).normalize();   // mutated in place by setTimeOfDay
+// Time of day: a sun direction and the tints that go with it. High noon is the original look; morning is cool
+// and clear with the sun low in the east; golden hour is warm with long shadows. Everything stays readable.
+export const TIMES = {
+  morning: { dir: [0.85, 0.4, 0.25], sun: [0xfff8ec, 3.0], hemi: [0xb2d8ff, 0xd8c8a6, 1.35], fog: 0xd8e8f6, skyTop: 0x3f8ce9, skyMid: 0x93cdff, horizon: 0xe2f0ff, glow: 0xffe0b0, disc: 0xfff8ea },
+  noon: { dir: [0.5, 0.7, 0.5], sun: [0xfff1d8, 3.3], hemi: [0x9fd0ff, 0xe4c58c, 1.25], fog: 0xbfe0ff, skyTop: 0x2f7fe6, skyMid: 0x7fc4ff, horizon: 0xbfe0ff, glow: 0xffc27a, disc: 0xfff3d6 },
+  golden: { dir: [-0.62, 0.3, 0.55], sun: [0xffc98a, 3.5], hemi: [0x8cb0e6, 0xdca070, 1.1], fog: 0xf2cfa8, skyTop: 0x2a5fc4, skyMid: 0x6fa3e8, horizon: 0xffc79c, glow: 0xff9a4a, disc: 0xffe0b0 },
+};
 
 const rng = mulberry32(1337);
 function mulberry32(a) {
@@ -420,18 +428,18 @@ function buildSeafloor() {
 }
 
 // ---------------------------------------------------------------- sky & sun
-function buildSky(sunDirUniform) {
+function buildSky(sunDirUniform, tod) {
   const geo = new THREE.SphereGeometry(6500, 24, 12);
   const mat = new THREE.MeshBasicNodeMaterial({ side: THREE.BackSide, depthWrite: false });
   mat.fog = false;
   const dir = normalize(positionLocal);
   const t = saturate(dir.y.mul(1.25).add(0.05));
-  let c = mix(color(PALETTE.horizon), color(0x7fc4ff), smoothstep(0.0, 0.09, t));
-  c = mix(c, color(PALETTE.sky), smoothstep(0.09, 0.8, t));
+  let c = mix(tod.horizon, tod.skyMid, smoothstep(0.0, 0.09, t));
+  c = mix(c, tod.skyTop, smoothstep(0.09, 0.8, t));
   const sunDot = saturate(dot(dir, sunDirUniform));
   // warm glow around the sun and along the sun-side horizon
   const horizonGlow = smoothstep(0.35, 0.0, dir.y).mul(pow(sunDot, 3)).mul(0.35);
-  c = c.add(color(0xffe1b0).mul(pow(sunDot, 120).mul(1.3))).add(color(PALETTE.sunGlow).mul(pow(sunDot, 5).mul(0.22).add(horizonGlow)));
+  c = c.add(color(0xffe1b0).mul(pow(sunDot, 120).mul(1.3))).add(tod.glow.mul(pow(sunDot, 5).mul(0.22).add(horizonGlow)));
   mat.colorNode = c;
   const mesh = new THREE.Mesh(geo, mat);
   mesh.frustumCulled = false;
@@ -789,6 +797,7 @@ function buildProps(scene, lit, glow) {
 // ---------------------------------------------------------------- assemble
 export function createWorld(scene, { mobile, lit, glow, soft }) {
   const sunDirUniform = uniform(SUN_DIR.clone());
+  const tod = { skyTop: uniform(new THREE.Color(TIMES.noon.skyTop)), skyMid: uniform(new THREE.Color(TIMES.noon.skyMid)), horizon: uniform(new THREE.Color(TIMES.noon.horizon)), glow: uniform(new THREE.Color(TIMES.noon.glow)), fog: uniform(new THREE.Color(TIMES.noon.fog)) };
 
   const sun = new THREE.DirectionalLight(0xfff1d8, 3.3);
   sun.castShadow = true;
@@ -814,18 +823,20 @@ export function createWorld(scene, { mobile, lit, glow, soft }) {
   const farFog = rangeFogFactor(1500, 4600);
   const haze = smoothstep(float(140), float(2600), positionView.z.negate()).mul(0.16)
     .mul(mix(float(1), float(0.5), smoothstep(float(0), float(320), positionWorld.y)));
-  scene.fogNode = fog(color(PALETTE.fogColor), farFog.add(haze.mul(float(1).sub(farFog))));
+  scene.fogNode = fog(tod.fog, farFog.add(haze.mul(float(1).sub(farFog))));
 
   const terrain = buildTerrain();
   const seafloor = buildSeafloor();
   const water = buildWater({ mobile });
   const fresh = buildFreshWater(water.lakeMaterial);
   const bigFalls = soft ? buildWaterfalls(soft) : [];
-  const sky = buildSky(sunDirUniform);
+  const sky = buildSky(sunDirUniform, tod);
   const sunSlot = glow.alloc();
   glow.color(sunSlot, 0xfff3d6); glow.scalar(sunSlot, 4);
   const clouds = buildClouds();
   const props = buildProps(scene, lit, glow);
+  const landmarks = buildLandmarks(lit, glow);
+  const arenas = findArenas(props.villages);
   const bounds = buildBounds();
   scene.add(terrain, seafloor, water.near, water.far, fresh, sky, clouds.mesh, bounds.group);
 
@@ -834,6 +845,21 @@ export function createWorld(scene, { mobile, lit, glow, soft }) {
   const sunNdc = new THREE.Vector3(), tmpDir = new THREE.Vector3();
   const shadowFocus = new THREE.Vector3(), sunM = new THREE.Matrix4(), sunQ = new THREE.Quaternion(), sunS = new THREE.Vector3(150, 150, 150), sunP = new THREE.Vector3(), sunE = new THREE.Euler();
   let sunSpin = 0;
+  let timeOfDay = 'noon';
+  /** Swings the sun and retints the light, sky and fog for one of TIMES. The water is not touched: it only
+   *  receives the new light like everything else. */
+  const setTimeOfDay = (name) => {
+    const T = TIMES[name] || TIMES.noon;
+    timeOfDay = name;
+    SUN_DIR.set(T.dir[0], T.dir[1], T.dir[2]).normalize();
+    sunDirUniform.value.copy(SUN_DIR);
+    lightRight.crossVectors(new THREE.Vector3(0, 1, 0), SUN_DIR).normalize();
+    lightUp.crossVectors(SUN_DIR, lightRight).normalize();
+    sun.color.set(T.sun[0]); sun.intensity = T.sun[1];
+    hemi.color.set(T.hemi[0]); hemi.groundColor.set(T.hemi[1]); hemi.intensity = T.hemi[2];
+    tod.skyTop.value.set(T.skyTop); tod.skyMid.value.set(T.skyMid); tod.horizon.value.set(T.horizon); tod.glow.value.set(T.glow); tod.fog.value.set(T.fog);
+    glow.color(sunSlot, T.disc);
+  };
   // Motion smear for the post pass: how far the camera turned (yaw, pitch, roll) and moved (in its own frame) since
   // the last displayed frame. The rotation smears everything equally; the translation is divided by each pixel's
   // depth in the shader, so near ground streaks past while far isles and sky barely move. It only switches on past
@@ -846,6 +872,7 @@ export function createWorld(scene, { mobile, lit, glow, soft }) {
   const update = (dt, t, focus, camera, speed = 0) => {
     clouds.update(dt);
     props.update(dt, t, focus, speed);
+    landmarks.animate(dt);
     sky.position.copy(camera.position);
     sunSpin += dt * 0.1;
     sunP.copy(camera.position).addScaledVector(SUN_DIR, 5200);
@@ -885,5 +912,5 @@ export function createWorld(scene, { mobile, lit, glow, soft }) {
 
   /** Distance to the nearest big waterfall (for its rumble). */
   const nearestFall = (pos) => { let d = Infinity; for (const f of bigFalls) d = Math.min(d, Math.hypot(pos.x - f.x, pos.y - f.y, pos.z - f.z)); return d; };
-  return { update, setDanger: bounds.setDanger, props, nearestFall, bigFalls, sunScreen, smear, clouds: clouds.clouds, brushPalms: props.brushPalms };
+  return { update, setDanger: bounds.setDanger, props, nearestFall, bigFalls, sunScreen, smear, clouds: clouds.clouds, brushPalms: props.brushPalms, setTimeOfDay, get timeOfDay() { return timeOfDay; }, landmarks, arenas };
 }
