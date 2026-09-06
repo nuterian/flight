@@ -834,10 +834,12 @@ export function createWorld(scene, { mobile, lit, glow, soft }) {
   const sunNdc = new THREE.Vector3(), tmpDir = new THREE.Vector3();
   const shadowFocus = new THREE.Vector3(), sunM = new THREE.Matrix4(), sunQ = new THREE.Quaternion(), sunS = new THREE.Vector3(150, 150, 150), sunP = new THREE.Vector3(), sunE = new THREE.Euler();
   let sunSpin = 0;
-  // Motion smear for the post pass: how far the camera turned (yaw, pitch, roll) and travelled forward since the
-  // last displayed frame, as screen-space blur vectors. A 180 degree shutter, softened: a hint, not a streak.
-  const smear = { shift: uniform(new THREE.Vector2()), roll: uniform(0), zoom: uniform(0), aspect: uniform(1), focus: uniform(new THREE.Vector2(-10, -10)) };
-  const prevCamQ = new THREE.Quaternion(), prevCamP = new THREE.Vector3(), dq = new THREE.Quaternion(), camF = new THREE.Vector3();
+  // Motion smear for the post pass: how far the camera turned (yaw, pitch, roll) and moved (in its own frame) since
+  // the last displayed frame. The rotation smears everything equally; the translation is divided by each pixel's
+  // depth in the shader, so near ground streaks past while far isles and sky barely move. It only switches on past
+  // a threshold of turn rate or speed, then follows the projected motion. A 180 degree shutter, softened.
+  const smear = { shift: uniform(new THREE.Vector2()), roll: uniform(0), trans: uniform(new THREE.Vector3()), fy: uniform(1), aspect: uniform(1) };
+  const prevCamQ = new THREE.Quaternion(), prevCamP = new THREE.Vector3(), dq = new THREE.Quaternion(), camInv = new THREE.Quaternion(), dp = new THREE.Vector3();
   let smearReady = false;
   const lightRight = new THREE.Vector3().crossVectors(new THREE.Vector3(0, 1, 0), SUN_DIR).normalize();
   const lightUp = new THREE.Vector3().crossVectors(SUN_DIR, lightRight).normalize();
@@ -854,19 +856,21 @@ export function createWorld(scene, { mobile, lit, glow, soft }) {
     const edge = Math.max(Math.abs(sunNdc.x), Math.abs(sunNdc.y));
     sunScreen.uv.value.set((sunNdc.x + 1) * 0.5, (sunNdc.y + 1) * 0.5);
     sunScreen.strength.value = behind ? 0 : 1 - THREE.MathUtils.smoothstep(edge, 1.0, 1.7);
-    if (smearReady && dt > 0 && dt < 0.1) {
-      dq.copy(prevCamQ).invert().multiply(camera.quaternion);   // the turn since last frame, in the old camera's frame
-      const k = 0.5 / Math.tan(THREE.MathUtils.degToRad(camera.fov) * 0.5) * 0.35;   // radians -> screen fraction, shuttered
-      smear.shift.value.set(2 * dq.y * k, 2 * dq.x * k);
-      smear.roll.value = 2 * dq.z * 0.35;
-      camF.set(0, 0, -1).applyQuaternion(camera.quaternion);
-      smear.zoom.value = tmpDir.copy(camera.position).sub(prevCamP).dot(camF) / 140 * 0.35;   // travel against ~140 units of scenery
-    } else { smear.shift.value.set(0, 0); smear.roll.value = 0; smear.zoom.value = 0; }   // a cut or a stall: no smear
+    const fy = 0.5 / Math.tan(THREE.MathUtils.degToRad(camera.fov) * 0.5);   // focal length in screen heights
+    let gate = 0;
+    if (smearReady && dt > 0 && dt < 0.1 && speed > 0) {
+      dq.copy(prevCamQ).invert().multiply(camera.quaternion);                                   // the turn since last frame
+      dp.copy(camera.position).sub(prevCamP).applyQuaternion(camInv.copy(camera.quaternion).invert());   // the move, in the camera's frame
+      const omega = 2 * Math.acos(Math.min(1, Math.abs(dq.w))) / dt, v = dp.length() / dt;
+      gate = Math.max(THREE.MathUtils.smoothstep(omega, 0.6, 1.6), THREE.MathUtils.smoothstep(v, 85, 115)) * 0.35;
+    }
+    if (gate > 0) {
+      smear.shift.value.set(2 * dq.y * fy * gate, -2 * dq.x * fy * gate);   // yaw and pitch: the whole frame slides
+      smear.roll.value = 2 * dq.z * gate;                                    // roll: the frame swirls about the centre
+      smear.trans.value.copy(dp).multiplyScalar(gate);                       // travel: divided by depth per pixel
+    } else { smear.shift.value.set(0, 0); smear.roll.value = 0; smear.trans.value.set(0, 0, 0); }   // a cut, a stall, the title
     prevCamQ.copy(camera.quaternion); prevCamP.copy(camera.position); smearReady = true;
-    smear.aspect.value = camera.aspect;
-    // the plane you are flying holds still in the chase view, so the smear is masked out around it
-    if (speed > 0) { tmpDir.copy(focus).project(camera); smear.focus.value.set((tmpDir.x + 1) * 0.5, (tmpDir.y + 1) * 0.5); }
-    else smear.focus.value.set(-10, -10);
+    smear.fy.value = fy; smear.aspect.value = camera.aspect;
     // Snap the shadow frustum to whole shadow-map texels in light space so shadow edges don't crawl as the player moves.
     const texel = (2 * ext) / sm.mapSize.x;
     const dr = shadowFocus.copy(focus).dot(lightRight), du = focus.dot(lightUp);

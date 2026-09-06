@@ -153,6 +153,12 @@ export class Sound {
   /** Punching through top speed. */
   boom() { if (!this.ctx) return; this.burst(320, 'lowpass', 0.28, 0.5, 0.005); this.blip(95, 38, 'sine', 0.32, 0.55); }
 
+  /** A medal: three soft rising notes, quieter than a wave clear. */
+  medal() {
+    if (!this.ctx) return;
+    [784, 988, 1319].forEach((f, i) => this.tone(f, 'triangle', i === 2 ? 0.5 : 0.14, 0.11, i * 0.12));
+  }
+
   waveClear() {
     if (!this.ctx) return;
     [523, 659, 784, 1047].forEach((f, i) => this.tone(f, 'triangle', i === 3 ? 0.45 : 0.11, 0.18, i * 0.1));

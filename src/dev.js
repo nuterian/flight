@@ -6,6 +6,7 @@ import { EnemyBrain } from './ai.js';
 import { Aircraft } from './aircraft.js';
 import { BULLET_SPEED } from './bullets.js';
 import { groundAt, BOUNDS } from './terrain.js';
+import { Medals } from './medals.js';
 
 export function attachDevHooks({ game, input, world, camera, pipeline, renderer, boxes, useTitleLens, title, music, menuMusic }) {
   const frame = (seconds) => {
@@ -61,9 +62,12 @@ export function attachDevHooks({ game, input, world, camera, pipeline, renderer,
   const seeded = () => { seed |= 0; seed = (seed + 0x6d2b79f5) | 0; let t = Math.imul(seed ^ (seed >>> 15), 1 | seed); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
   const realRandom = Math.random;
   /** A repeatable wave-6 fight from a fixed pose, with seeded randomness, for before/after benchmarks. */
+  /** Headless runs must not hand out real medals: swap in a scratch set for the duration. */
+  const realMedals = game.medals;
   window.__scenario = () => {
     seed = 1234567;
     Math.random = seeded;
+    game.medals = new Medals(false);
     game.start();
     for (let i = 0; i < 5; i++) game.nextWave();
     for (const e of game.enemies) if (e.pending > 0) e.pending = 1e-4;
@@ -73,6 +77,7 @@ export function attachDevHooks({ game, input, world, camera, pipeline, renderer,
     game.enemies.forEach((e, i) => { if (!e.ac.alive) return; e.ac.pos.copy(p.pos).addScaledVector(p.forward, 120 + i * 40).add({ x: (i - 3) * 30, y: (i % 2) * 20 - 10, z: 0 }); e.ac.quat.copy(p.quat); e.ac.updateAxes(); });
     window.__step(1.5, { pitch: 0.15, roll: 0.35, yaw: 0, throttle: 1, fire: true });
     Math.random = realRandom;
+    game.medals = realMedals;
   };
   // ---- AI profile: a scripted "average" pilot flies a wave so the bandits' behaviour can be measured, not felt -------
   const clampN = THREE.MathUtils.clamp;
@@ -111,6 +116,7 @@ export function attachDevHooks({ game, input, world, camera, pipeline, renderer,
   window.__flyAverage = flyAverage;   // for staging: `__flyAverage(1/120); __game.update(1/120)` per step
   const profileOnce = (wave, seconds, s) => {
     seed = s; Math.random = seeded;
+    game.medals = new Medals(false);
     const origDamage = Aircraft.prototype.damage, origFire = game.fire;
     const n = { pShots: 0, eShots: 0, pHits: 0, eHits: 0, taken: 0 };
     Aircraft.prototype.damage = function (amt) { if (this.team === 1) n.pHits++; else { n.eHits++; n.taken += amt; } return origDamage.call(this, amt); };
@@ -150,7 +156,7 @@ export function attachDevHooks({ game, input, world, camera, pipeline, renderer,
     Aircraft.prototype.damage = origDamage; game.fire = origFire;
     const kills = game.kills, health = game.player.health, died = game.state !== 'playing';
     game.abort();
-    Math.random = realRandom;
+    Math.random = realRandom; game.medals = realMedals;
     const f = (x) => +x.toFixed(3);
     const stateFrac = {}; for (const k in states) stateFrac[k] = f(states[k] / (banditT || 1));
     return {

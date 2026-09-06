@@ -17,6 +17,7 @@ export class Input {
     this.onStart = null;                   // callback: user pressed start
     this.onMute = null;                    // callback: M pressed
     this.onAbort = null;                   // callback: Escape pressed
+    this.onDaily = null;                   // callback: T pressed (today's flight)
 
     window.addEventListener('keydown', (e) => {
       if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', ' '].includes(e.key)) e.preventDefault();
@@ -26,6 +27,7 @@ export class Input {
       if (e.code === 'KeyC') this.recenter();
       if (e.code === 'KeyM' && this.onMute) this.onMute();
       if (e.code === 'Escape' && this.onAbort) this.onAbort();
+      if (e.code === 'KeyT' && this.onDaily) this.onDaily();
     });
     window.addEventListener('keyup', (e) => this.keys.delete(e.code));
     window.addEventListener('blur', () => this.keys.clear());

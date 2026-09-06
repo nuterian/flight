@@ -62,15 +62,19 @@ async function boot() {
     });
     return col;
   })();
-  // Motion smear: the scene colour averaged along the direction each pixel moved during the frame (a sideways shift
-  // for yaw and pitch, a swirl about the centre for roll, a radial stretch for forward travel), from the camera's
-  // motion measured in world.update. Six taps, symmetric so nothing lags, never more than ~2% of the screen.
+  // Motion smear: the scene colour averaged along the direction each pixel moved during the frame. The camera's turn
+  // slides (yaw, pitch) and swirls (roll) the whole frame; its travel is projected per pixel and divided by the
+  // pixel's depth, so the ground streaks past at a low pass while the horizon holds. Your own plane, a few units
+  // in front of the camera, is excluded by depth. Six symmetric taps so nothing lags, never more than 2.5% of the
+  // screen. The vectors are measured in world.update, which also gates the effect behind a speed / turn threshold.
   const sm = world.smear;
   const smeared = mobile ? scenePassColor : Fn(() => {
+    const w = scenePass.getViewZNode().negate().max(0.5);              // distance in front of the camera
     const d = screenUV.sub(0.5).mul(vec2(sm.aspect, 1));
-    let off = sm.shift.add(vec2(d.y.negate(), d.x).mul(sm.roll)).add(d.mul(sm.zoom));
-    off = off.mul(float(0.018).div(length(off).add(1e-5)).min(1));
-    off = off.mul(smoothstep(0.05, 0.14, length(screenUV.sub(sm.focus).mul(vec2(sm.aspect, 1)))));   // your own plane stays crisp
+    let off = sm.shift.add(vec2(d.y, d.x.negate()).mul(sm.roll));
+    off = off.add(sm.trans.xy.mul(sm.fy).add(d.mul(sm.trans.z)).div(w));
+    off = off.mul(float(0.025).div(length(off).add(1e-5)).min(1));
+    off = off.mul(smoothstep(28, 40, w));                               // the plane you are flying stays crisp
     off = vec2(off.x.div(sm.aspect), off.y);
     const col = vec3(0).toVar();
     const taps = 6;
@@ -139,11 +143,13 @@ async function boot() {
   $('btn-help-close').addEventListener('pointerdown', (e) => { e.preventDefault(); showHelp(false); });
   help.addEventListener('pointerdown', (e) => { if (e.target === help) showHelp(false); });
 
-  let starting = false;
-  const startGame = async () => {
+  let starting = false, lastMode = 'free';
+  /** Starts a run: 'free' as always, or 'daily' for today's seeded flight. Enter after a run repeats its mode. */
+  const startGame = async (mode = lastMode) => {
     if (!help.classList.contains('hidden')) { showHelp(false); return; }
     if (starting || game.state === 'playing' || game.state === 'dead') return;
     starting = true;
+    lastMode = mode;
     try {
       if (touch) {
         if (input.mode !== 'tilt') {
@@ -159,7 +165,7 @@ async function boot() {
         try { screen.orientation?.lock?.('landscape')?.catch(() => {}); } catch (_) { /* optional */ }
       }
       input.recenter();
-      game.start();
+      game.start(mode);
       menuMusic();
     } catch (err) {
       console.error(err);
@@ -172,11 +178,16 @@ async function boot() {
   const abortRun = () => { if (!help.classList.contains('hidden')) showHelp(false); else if (game.state !== 'title') { game.abort(); hud.showTouch(false); menuMusic(); } };
   input.onAbort = abortRun;
   $('btn-quit').addEventListener('pointerdown', (e) => { e.preventDefault(); e.stopPropagation(); abortRun(); });
-  input.onStart = startGame;
+  input.onStart = () => startGame(game.state === 'gameover' ? lastMode : 'free');
+  input.onDaily = () => { if (game.state === 'title' || game.state === 'gameover') startGame('daily'); };
+  $('btn-daily').addEventListener('pointerdown', (e) => { e.preventDefault(); e.stopPropagation(); startGame('daily'); });
+  $('btn-share').addEventListener('pointerdown', (e) => { e.preventDefault(); e.stopPropagation(); hud.copyResult(); });
+  $('medals').addEventListener('pointerdown', (e) => { e.stopPropagation(); });
   hud.showMute(game.audio.muted);
   input.onMute = () => hud.showMute(game.audio.toggleMute());
   $('btn-mute').addEventListener('pointerdown', (e) => { e.preventDefault(); e.stopPropagation(); input.onMute(); });
-  for (const id of ['title', 'gameover']) $(id).addEventListener('pointerdown', (e) => { e.preventDefault(); startGame(); });
+  $('title').addEventListener('pointerdown', (e) => { e.preventDefault(); startGame('free'); });
+  $('gameover').addEventListener('pointerdown', (e) => { e.preventDefault(); startGame(lastMode); });
 
   addEventListener('resize', () => {
     if (innerWidth === 0 || innerHeight === 0) return; // hidden tab / backgrounded pane

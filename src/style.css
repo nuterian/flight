@@ -117,6 +117,38 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: #6ec1ff; fon
 #btn-track:hover { border-bottom-color: var(--cream); }
 #btn-track.pop span { display: inline-block; animation: bump 0.35s var(--spring); }
 .intro .mobilehint { display: none; margin: 14px 0 0; font-size: 13px; opacity: 0.8; }
+/* today's flight: one pill under the prompt, with the date and your best for it */
+.intro .daily { margin: 14px 0 0; }
+#btn-daily { pointer-events: auto; font: inherit; font-weight: 800; font-size: 12px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--cream); background: var(--hud-shade); border: 2px solid rgba(255,246,229,0.55); border-radius: 999px; padding: 8px 16px; cursor: pointer; backdrop-filter: blur(6px); transition: transform 0.25s var(--spring), background 0.2s; }
+#btn-daily:hover { transform: scale(1.05); background: rgba(255,246,229,0.22); }
+#btn-daily kbd { min-width: 18px; padding: 1px 5px; margin: 0 4px 0 8px; font-size: 11px; border-bottom-width: 3px; color: var(--ink); text-shadow: none; }
+#btn-daily span { display: inline-block; margin-left: 8px; padding-left: 10px; border-left: 1px solid rgba(255,246,229,0.35); font-weight: 700; letter-spacing: 0.06em; text-transform: none; opacity: 0.85; }
+/* medals: voxel pips, greyed until earned */
+#medals { display: flex; justify-content: center; gap: 9px; margin: 14px 0 0; }
+.pip { display: inline-block; width: 14px; height: 14px; border-radius: 2px; background: #8a94a1; box-shadow: inset -3px -3px 0 rgba(0,0,0,0.28), inset 3px 3px 0 rgba(255,255,255,0.35); opacity: 0.32; transition: transform 0.25s var(--spring); }
+.pip.earned { opacity: 1; }
+#medals .pip:hover { transform: scale(1.35) rotate(6deg); }
+/* the debrief: numbers land one after another */
+.card.debrief { padding: 28px 52px 24px; min-width: 400px; }
+.card.debrief .mode { margin: 8px 0 16px; font-size: 12px; font-weight: 800; letter-spacing: 0.25em; text-transform: uppercase; opacity: 0.55; }
+.rows { display: flex; flex-direction: column; gap: 3px; width: 290px; margin: 0 auto 12px; }
+.row { display: flex; align-items: baseline; justify-content: space-between; opacity: 0; }
+.row.in { animation: rowIn 0.45s var(--spring) both; }
+.row span { font-size: 12px; font-weight: 800; letter-spacing: 0.14em; text-transform: uppercase; opacity: 0.6; }
+.row b { font-size: 20px; font-weight: 900; font-variant-numeric: tabular-nums; }
+.row.score b { font-size: 28px; color: var(--coral); }
+.row b.land { display: inline-block; animation: bump 0.35s var(--spring); }
+@keyframes rowIn { from { opacity: 0; transform: translateX(-14px); } to { opacity: 1; transform: none; } }
+.later { opacity: 0; }
+.later.in { animation: rowIn 0.5s var(--spring) both; }
+#dbmedal { margin: 6px 0 0; font-size: 15px; font-weight: 800; }
+#dbmedal .pip { width: 12px; height: 12px; margin-right: 9px; vertical-align: -1px; }
+#dbmedal em { font-style: normal; font-size: 11px; letter-spacing: 0.22em; color: var(--coral); margin-left: 8px; }
+#dbmedal.next { opacity: 0; } #dbmedal.next.in { opacity: 0.55; }
+#btn-share { margin: 14px 0 6px; padding: 9px 20px; border-radius: 999px; border: 0; background: var(--ink); color: var(--cream); font: inherit; font-weight: 800; font-size: 13px; letter-spacing: 0.12em; text-transform: uppercase; cursor: pointer; box-shadow: 0 4px 0 rgba(0,0,0,0.2); }
+#btn-share:active { transform: translateY(2px); box-shadow: 0 2px 0 rgba(0,0,0,0.2); }
+#btn-share.done { background: var(--coral); }
+.card.debrief .press { margin: 10px 0 0; font-size: 14px; }
 .card.help { max-width: 600px; padding: 32px 44px 28px; }
 .card.help h2 { margin: 0 0 18px; font-size: 30px; font-weight: 900; letter-spacing: -0.01em; }
 .card.help .note { font-size: 14px; line-height: 1.5; opacity: 0.78; margin: 0 0 10px; text-align: left; }
@@ -139,7 +171,7 @@ kbd { display: inline-block; min-width: 26px; padding: 3px 7px; margin: 0 2px; b
 @keyframes pulse { 50% { opacity: 0.55; } }
 .best, .result { opacity: 0.8; font-size: 16px; }
 .result b { color: var(--coral); }
-#newbest { color: var(--coral); font-weight: 900; font-size: 22px; letter-spacing: 0.1em; }
+#newbest { color: var(--coral); font-weight: 900; font-size: 22px; letter-spacing: 0.1em; margin: 10px 0 0; }
 
 /* ---- touch controls ---------------------------------------------------------------------------------------- */
 #touch { position: fixed; inset: 0; pointer-events: none; z-index: 5; }
@@ -166,6 +198,10 @@ kbd { display: inline-block; min-width: 26px; padding: 3px 7px; margin: 0 2px; b
   .intro .mobilehint { display: block; }
   .quick > div { display: none; }
   .card { padding: 26px 30px; max-width: 92vw; }
+  .card.debrief { min-width: 0; padding: 20px 26px 18px; }
+  .card.debrief .rows { width: 240px; gap: 1px; }
+  .row b { font-size: 17px; } .row.score b { font-size: 22px; }
+  #btn-daily kbd { display: none; }
   .card h1 { font-size: 56px; }
   .card h1.small { font-size: 44px; }
   .tag { font-size: 15px; margin-bottom: 10px; }

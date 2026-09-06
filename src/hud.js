@@ -1,4 +1,5 @@
 import * as THREE from 'three/webgpu';
+import { MEDALS } from './medals.js';
 
 const v = new THREE.Vector3();
 const $ = (id) => document.getElementById(id);
@@ -10,8 +11,8 @@ export class Hud {
     this.el = {
       hud: $('hud'), score: $('score'), wave: $('wave'), enemies: $('enemies'), health: $('health'), speed: $('speed'),
       crosshair: $('crosshair'), lead: $('leadret'), markers: $('markers'), banner: $('banner'), warning: $('warning'),
-      vignette: $('vignette'), title: $('title'), gameover: $('gameover'), best: $('best'), finalscore: $('finalscore'),
-      finalwave: $('finalwave'), finalkills: $('finalkills'), newbest: $('newbest'), touch: $('touch'),
+      vignette: $('vignette'), title: $('title'), gameover: $('gameover'), best: $('best'), newbest: $('newbest'), touch: $('touch'),
+      dbmode: $('dbmode'), dbrows: $('dbrows'), dbmedal: $('dbmedal'), share: $('btn-share'), gohint: $('gohint'), medals: $('medals'), dailyinfo: $('dailyinfo'),
       healthwrap: $('healthwrap'), killfeed: $('killfeed'), combo: $('combo'), mute: $('mute'), pips: $('pips'), speedbar: $('speedbar'), btnMute: $('btn-mute'),
     };
     this.pipCount = 0;
@@ -21,6 +22,7 @@ export class Hud {
     this.bannerTimer = null;
     this.flash = 0;
     this.hitFrames = 0;
+    this.debrief = null;
   }
 
   text(key, value) {
@@ -164,11 +166,83 @@ export class Hud {
 
   resetScore() { this.shownScore = 0; this.flash = 0; this.el.killfeed.replaceChildren(); this.comboOff(); }
 
-  showGameOver(score, wave, kills, isBest) {
-    this.text('finalscore', String(score));
-    this.text('finalwave', String(wave));
-    this.text('finalkills', String(kills));
+  /** The title's medal pips: every medal, coloured once earned, a question mark's worth of grey for secrets. */
+  medals(medals) {
+    const el = this.el.medals;
+    if (el.children.length !== MEDALS.length) el.replaceChildren(...MEDALS.map(() => { const i = document.createElement('i'); i.className = 'pip'; return i; }));
+    MEDALS.forEach((m, k) => {
+      const pip = el.children[k], earned = medals.has(m.id);
+      pip.classList.toggle('earned', earned);
+      pip.style.background = earned ? m.color : '';
+      pip.title = earned ? `${m.name} · ${m.hint}` : (m.secret ? 'A secret medal' : `${m.name} · ${m.hint}`);
+    });
+  }
+
+  /** The title's "today's flight" line: the date and your best for it, or that it is still unflown. */
+  daily(label, best) {
+    this.el.dailyinfo.textContent = best ? `${label} · best ${best.best}` : `${label} · not flown yet`;
+  }
+
+  /**
+   * The debrief: rows land one after another and their numbers tick up from zero (the score's own pattern), then
+   * the medal line, the new-best flag, the share button and the prompt. `tickDebrief` drives it per frame.
+   */
+  showDebrief({ mode, score, waves, kills, accuracy, bestCombo, streak, aloft, medal, next, isBest, share }) {
+    this.el.dbmode.textContent = mode;
+    const rows = [...this.el.dbrows.children];
+    const fmt = {
+      int: (v) => String(Math.round(v)), pct: (v) => `${Math.round(v)}%`, secs: (v) => `${v.toFixed(1)} s`,
+      time: (v) => `${Math.floor(v / 60)}:${String(Math.floor(v % 60)).padStart(2, '0')}`,
+    };
+    const spec = [[score, 'int'], [waves, 'int'], [kills, 'int'], [accuracy, 'pct'], [bestCombo, 'int'], [streak, 'secs'], [aloft, 'time']];
+    const items = spec.map(([target, f], i) => ({ el: rows[i], val: rows[i].lastChild, target, shown: 0, f: fmt[f], at: 0.35 + i * 0.22, landed: false }));
+    for (const it of items) { it.el.classList.remove('in'); it.val.classList.remove('land'); it.val.textContent = it.f(0); }
+    const m = this.el.dbmedal, pip = m.firstChild, name = m.children[1], tag = m.lastChild;
+    const shown = medal || next;
+    m.classList.toggle('next', !medal);
+    m.classList.toggle('hidden', !shown);
+    if (shown) {
+      pip.className = `pip${medal ? ' earned' : ''}`; pip.style.background = medal ? shown.color : '';
+      name.textContent = medal ? `${shown.name} · ${shown.hint}` : `Next: ${shown.name} · ${shown.hint.toLowerCase()}`;
+      tag.textContent = medal && medal.isNew ? 'NEW' : '';
+    }
     this.el.newbest.classList.toggle('hidden', !isBest);
+    this.el.share.classList.toggle('hidden', !share);
+    this.el.share.classList.remove('done'); this.el.share.textContent = 'Copy result';
+    this.shareText = share;
+    const last = items[items.length - 1].at;
+    const later = [[m, last + 0.35], [this.el.newbest, last + 0.55], [this.el.share, last + 0.7], [this.el.gohint, last + 0.85]];
+    for (const [el] of later) el.classList.remove('in');
+    this.debrief = { t: 0, items, later };
     this.showScreen('gameover');
+  }
+
+  tickDebrief(dt) {
+    const d = this.debrief;
+    if (!d) return;
+    d.t += dt;
+    for (const it of d.items) {
+      if (d.t < it.at) continue;
+      it.el.classList.add('in');
+      if (it.landed) continue;
+      const diff = it.target - it.shown;
+      it.shown = Math.abs(diff) < Math.max(0.5, Math.abs(it.target) * 0.01) ? it.target : it.shown + diff * Math.min(1, dt * 7);
+      if (it.shown === it.target) { it.landed = true; it.val.classList.add('land'); }
+      it.val.textContent = it.f(it.shown);
+    }
+    for (const [el, at] of d.later) if (d.t >= at) el.classList.add('in');
+  }
+
+  /** Copies the debrief's result line; the button says so for a moment. */
+  async copyResult() {
+    const text = this.shareText;
+    if (!text) return;
+    let ok = false;
+    try { await navigator.clipboard.writeText(text); ok = true; } catch (_) {
+      try { const ta = document.createElement('textarea'); ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0'; document.body.appendChild(ta); ta.select(); ok = document.execCommand('copy'); ta.remove(); } catch (__) { ok = false; }
+    }
+    this.el.share.textContent = ok ? 'Copied' : 'Could not copy';
+    this.el.share.classList.toggle('done', ok);
+    setTimeout(() => { this.el.share.textContent = 'Copy result'; this.el.share.classList.remove('done'); }, 1800);
   }
 }

@@ -9,12 +9,15 @@ import { Sound, store } from './audio.js';
 import { groundAt, isWaterAt, kindAt, KIND, BOUNDS } from './terrain.js';
 import { Portal } from './portal.js';
 import { SUN_DIR } from './world.js';
+import { Medals, MEDALS, byId } from './medals.js';
+import { todayKey, todayLabel, dailySeed, mulberry32, loadDailyBest, saveDailyBest, shareLine } from './daily.js';
 
 const tv = new THREE.Vector3(), tv2 = new THREE.Vector3(), tq = new THREE.Quaternion(), spreadV = new THREE.Vector3();
 const clamp = THREE.MathUtils.clamp;
 const WORLD_UP = new THREE.Vector3(0, 1, 0), NEG_Z = new THREE.Vector3(0, 0, -1);
 const rnd = (a, b) => a + Math.random() * (b - a);
 const MAX_ENEMIES = 9;
+const TWO_PI = Math.PI * 2;
 
 export class Game {
   constructor(scene, camera, input, hud, world, batches) {
@@ -33,6 +36,8 @@ export class Game {
     this.trails = new Trails(scene, (MAX_ENEMIES + 1) * 2);
 
     this.pack = { hunting: 0, max: 1 };   // how many bandits are hunting the player right now, and how many may
+    this.medals = new Medals();
+    this.daily = false; this.rng = Math.random;   // the daily flight swaps in a seeded generator for the run's layout
     this.player = new Aircraft(new Plane(batches, SCHEMES.player), PLAYER_STATS, 0);
     this.player.trails = [this.trails.ribbon(), this.trails.ribbon()];
 
@@ -51,6 +56,8 @@ export class Game {
     this.fov = 62;
     this.best = Number(store.get('skyfight.best') || 0);
     this.hud.text('best', String(this.best));
+    this.hud.medals(this.medals);
+    this.hud.daily(todayLabel(), loadDailyBest());
     this.resetRun();
     this.player.hide();
     this.positionCameraIdle();
@@ -61,6 +68,10 @@ export class Game {
     this.waveClearTimer = 0; this.deathTimer = 0; this.regenDelay = 0; this.outsideTimer = 0; this.hitStop = 0;
     this.combo = 0; this.comboTimer = 0;
     this.killCam = 0; this.wasFast = false; this.hitStop = 0;
+    // the debrief's numbers and the medal checks
+    this.shots = 0; this.hits = 0; this.bestCombo = 0; this.streak = 0; this.bestStreak = 0; this.aloft = 0;
+    this.waveShots = 0; this.waveHits = 0; this.loopAcc = 0; this.loopT = 0; this.loopUp = false; this.loopDown = false;
+    this.runMedals = []; this.newMedals = [];
     if (this.portal) this.portal.hide();
     if (this.hud) this.hud.resetScore();
     if (this.world) this.world.setDanger(0);
@@ -68,17 +79,30 @@ export class Game {
     for (const e of this.enemies) { e.ac.alive = false; e.ac.hide(); e.pending = 0; }
   }
 
-  start() {
+  /** `mode` is 'free' (as it always was) or 'daily': today's seeded run. */
+  start(mode = 'free') {
     this.audio.init();   // we're inside the start gesture, so the context may be created here
     this.resetRun();
-    this.player.reset(new THREE.Vector3(0, 190, 700), tq.identity(), PLAYER_STATS.minSpeed);   // slow start so the gear tucks up on the way out
+    this.daily = mode === 'daily';
+    this.rng = this.daily ? mulberry32(dailySeed(todayKey())) : Math.random;
+    if (this.daily) {
+      // the day decides where you begin: somewhere on a ring around the isles, pointed roughly at them
+      const a = this.rng() * TWO_PI, r = 650 + this.rng() * 250;
+      tv.set(Math.sin(a) * r, 190 + this.rng() * 70, Math.cos(a) * r);
+      tq.setFromAxisAngle(WORLD_UP, Math.atan2(tv.x, tv.z) + (this.rng() - 0.5) * 0.8);
+      this.player.reset(tv, tq, PLAYER_STATS.minSpeed);
+    } else this.player.reset(new THREE.Vector3(0, 190, 700), tq.identity(), PLAYER_STATS.minSpeed);   // slow start so the gear tucks up on the way out
     for (const t of this.player.trails) this.trails.reset(t);
     this.camQuat.copy(this.player.quat);
     this.camPos.copy(this.player.pos).add(tv.set(0, 8, 30));
     this.state = 'playing';
     this.hud.showScreen('hud');
     this.nextWave();
+    if (this.daily) this.hud.kill(`TODAY'S FLIGHT · ${todayLabel()}`);
   }
+
+  /** The run's random number in [a, b): seeded on the daily flight, Math.random otherwise. */
+  r(a, b) { return a + this.rng() * (b - a); }
 
   positionCameraIdle() {
     this.camera.position.set(-260, 170, 520);
@@ -88,20 +112,26 @@ export class Game {
 
   nextWave() {
     this.wave++;
-    const count = Math.min(MAX_ENEMIES, 1 + Math.ceil(this.wave * 0.9));
-    const skill = Math.min(1, 0.32 + this.wave * 0.085);
+    let count = Math.min(MAX_ENEMIES, 1 + Math.ceil(this.wave * 0.9));
+    let skill = Math.min(1, 0.32 + this.wave * 0.085);
+    if (this.daily) {   // the day's composition: an extra bandit on some waves, a touch more or less skill
+      if (this.wave > 1 && this.rng() < 0.35) count = Math.min(MAX_ENEMIES, count + 1);
+      skill = Math.min(1, skill + (this.rng() - 0.5) * 0.08);
+    }
     this.waveSize = count;
+    this.waveShots = 0; this.waveHits = 0;
+    for (const m of MEDALS) if (m.wave && this.wave >= m.wave) this.earn(m.id);
     // Only part of the pack hunts you at once (1 on the first waves, one more every three); the rest cruise about
     // until a slot frees, so there is always a bandit showing you its tail and never a whole wave on yours.
     this.pack.max = Math.min(count, 1 + Math.floor(this.wave / 3));
     this.hud.banner(`WAVE ${this.wave}`);
     // A portal opens ahead-ish of the player and the bandits fly out of it one after another, head-on.
     const baseAngle = Math.atan2(this.player.forward.x, this.player.forward.z);
-    const a = baseAngle + rnd(-0.7, 0.7), r = rnd(600, 800);
+    const a = baseAngle + this.r(-0.7, 0.7), r = this.r(600, 800);
     tv.set(this.player.pos.x + Math.sin(a) * r, 0, this.player.pos.z + Math.cos(a) * r);
     const lim = BOUNDS.half - 160;
     tv.x = clamp(tv.x, -lim, lim); tv.z = clamp(tv.z, -lim, lim);
-    tv.y = clamp(rnd(200, 320), groundAt(tv.x, tv.z) + 130, 420);
+    tv.y = clamp(this.r(200, 320), groundAt(tv.x, tv.z) + 130, 420);
     tv2.copy(this.player.pos).sub(tv).setY(0).normalize();
     tq.setFromUnitVectors(NEG_Z, tv2);
     this.portal.open(tv, tq, 1.4 + count * 0.3 + 2.4);
@@ -180,7 +210,7 @@ export class Game {
     tv2.copy(ac.forward).add(spreadV.set(rnd(-spread, spread), rnd(-spread, spread), rnd(-spread, spread))).normalize().multiplyScalar(BULLET_SPEED).add(ac.velocity);
     pool.spawn(muzzle, tv2, ac, damage);
     this.effects.muzzle(muzzle);
-    if (ac === this.player) this.camKick = Math.min(1, this.camKick + 0.35);
+    if (ac === this.player) { this.camKick = Math.min(1, this.camKick + 0.35); this.shots++; this.waveShots++; }
     this.audio.gun(ac === this.player ? 0 : ac.pos.distanceTo(this.player.pos));
   }
 
@@ -240,6 +270,7 @@ export class Game {
   registerKill(label, base) {
     this.kills++;
     this.combo = this.comboTimer > 0 ? this.combo + 1 : 1;
+    this.bestCombo = Math.max(this.bestCombo, this.combo);
     this.comboTimer = 2.5;
     const pts = base * this.combo;
     this.addScore(pts);
@@ -255,10 +286,21 @@ export class Game {
     this.effects.shake = Math.max(this.effects.shake, base + near * 0.9);
   }
 
+  /** A medal's condition was met. The first time ever it is kept, named in the feed and chimed; every time it counts
+   *  for this run's debrief line. */
+  earn(id) {
+    if (!this.runMedals.includes(id)) this.runMedals.push(id);
+    if (!this.medals.earn(id)) return;
+    this.newMedals.push(id);
+    this.hud.kill(`MEDAL · ${byId(id).name}`);
+    this.audio.medal();
+  }
+
   /** Fixed-step simulation. Runs at 120 Hz; nothing in here touches the camera or the DOM. */
   update(dt) {
     if (this.state === 'title') { this.effects.update(dt); return; }
     if (this.hitStop > 0) { this.hitStop -= dt; return; }   // a few frames of freeze so a kill lands
+    if (this.state === 'playing') { this.aloft += dt; this.streak += dt; }   // real seconds, before any slow motion
     if (this.killCam > 0) {                                  // last kill of the wave: a slow orbit of the wreck
       this.killCam -= dt;
       if (this.killCam <= 0) { this.killCam = 0; this.snapCam = true; }
@@ -307,6 +349,15 @@ export class Game {
       this.shedTip(p);
       this.nearMiss(p, dt);
       if (inp.fire) this.fire(p, this.playerBullets, 11, 0.012, 13);
+      // the loop medal: a full turn of pitch inside eight seconds that really goes over the top (nose near vertical
+      // both ways, so a string of banked turns does not count), without a shot fired
+      if (inp.fire || this.loopT > 8) { this.loopAcc = 0; this.loopT = 0; this.loopUp = this.loopDown = false; }
+      else {
+        this.loopAcc += p.pitchVel * dt; this.loopT += dt;
+        if (p.forward.y > 0.88) this.loopUp = true;
+        if (p.forward.y < -0.88) this.loopDown = true;
+        if (Math.abs(this.loopAcc) > TWO_PI * 0.92 && this.loopUp && this.loopDown) { this.earn('loop'); this.loopAcc = 0; this.loopT = 0; this.loopUp = this.loopDown = false; }
+      }
       if (p.pos.y < groundAt(p.pos.x, p.pos.z) + 2.2) this.playerDied(isWaterAt(p.pos.x, p.pos.z));
       this.regenDelay -= dt;
       if (this.regenDelay <= 0 && p.health < p.maxHealth) p.health = Math.min(p.maxHealth, p.health + 3 * dt);
@@ -350,8 +401,10 @@ export class Game {
     this.playerBullets.update(dt, enemiesAlive, (t, point, dmg) => {
       this.effects.hitSpark(point);
       this.audio.hit(t.pos.distanceTo(p.pos));
+      this.hits++; this.waveHits++;
       if (t.damage(dmg)) {
         this.killAircraft(t, 1); this.registerKill('BANDIT DOWN', 100 * this.wave);
+        if (p.pos.y - groundAt(p.pos.x, p.pos.z) < 8) this.earn('wavetop');
         if (this.pending === 0 && this.aliveEnemies().length === 0) {
           // the wave's last bandit: swing the camera round its explosion in slow motion
           this.killCam = 0.7; this.killPoint.copy(t.pos);
@@ -366,7 +419,10 @@ export class Game {
     if (this.state === 'playing') {
       if (alive === 0 && this.pending === 0) {
         this.waveClearTimer += dt;
-        if (this.waveClearTimer > 0.2 && this.waveClearTimer - dt <= 0.2) { this.hud.banner('WAVE CLEAR!', 2200); this.player.health = Math.min(this.player.maxHealth, this.player.health + 30); this.addScore(250 * this.wave); this.audio.waveClear(); }
+        if (this.waveClearTimer > 0.2 && this.waveClearTimer - dt <= 0.2) {
+          this.hud.banner('WAVE CLEAR!', 2200); this.player.health = Math.min(this.player.maxHealth, this.player.health + 30); this.addScore(250 * this.wave); this.audio.waveClear();
+          if (this.waveShots >= 8 && this.waveHits >= this.waveShots) this.earn('marksman');
+        }
         if (this.waveClearTimer > 3.2) { this.waveClearTimer = 0; this.nextWave(); }
       }
     }
@@ -380,6 +436,7 @@ export class Game {
   /** Per displayed frame: camera and HUD. Called once per render, however many sim steps ran. */
   render(dt) {
     if (this.state === 'title') { this.idle(); this.audio.setFlight(0, 0, false, dt); this.audio.setAmbience(0); return; }
+    if (this.state === 'gameover') this.hud.tickDebrief(dt);
     this.updateCamera(dt);
     const alive = this.player.alive && this.state === 'playing';
     this.audio.setFlight(alive ? this.player.speed : 0, alive ? this.player.input.throttle : 0, alive && this.outside, dt);
@@ -414,6 +471,7 @@ export class Game {
   hurtPlayer(dmg) {
     const p = this.player;
     if (!p.alive) return;
+    this.bestStreak = Math.max(this.bestStreak, this.streak); this.streak = 0;
     this.regenDelay = 4;
     this.hud.damage(dmg / 25);
     this.hud.hit();
@@ -443,9 +501,30 @@ export class Game {
 
   gameOver() {
     this.state = 'gameover';
-    const isBest = this.score > this.best;
+    this.bestStreak = Math.max(this.bestStreak, this.streak);
+    let isBest = this.score > this.best;
     if (isBest) { this.best = this.score; store.set('skyfight.best', String(this.best)); this.hud.text('best', String(this.best)); }
-    this.hud.showGameOver(this.score, this.wave, this.kills, isBest);
+    let share = null;
+    if (this.daily) {
+      const key = todayKey(), prev = loadDailyBest(key);
+      isBest = !prev || this.score > prev.best;
+      if (isBest) saveDailyBest({ date: key, best: this.score, waves: this.wave, kills: this.kills });
+      this.hud.daily(todayLabel(), loadDailyBest(key));
+      const wings = MEDALS.filter((m) => m.wave && this.wave >= m.wave).length, secretCount = MEDALS.filter((m) => m.secret).length;
+      const secrets = this.runMedals.filter((id) => byId(id).secret).length;
+      share = shareLine({ date: key, wave: this.wave, kills: this.kills, score: this.score, wings, secrets, secretCount });
+    }
+    // the medal line: the newest medal if one was earned, else the run's highest, else the next one to aim for
+    let medal = null, next = null;
+    if (this.newMedals.length) medal = { ...byId(this.newMedals[this.newMedals.length - 1]), isNew: true };
+    else if (this.runMedals.length) medal = byId(this.runMedals.reduce((a, b) => (MEDALS.indexOf(byId(b)) > MEDALS.indexOf(byId(a)) ? b : a)));
+    else next = MEDALS.find((m) => m.wave && !this.medals.has(m.id)) || null;
+    this.hud.medals(this.medals);
+    this.hud.showDebrief({
+      mode: this.daily ? `Today's flight · ${todayLabel()}` : 'Free flight',
+      score: this.score, waves: this.wave, kills: this.kills, accuracy: this.shots ? this.hits / this.shots * 100 : 0,
+      bestCombo: this.bestCombo, streak: this.bestStreak, aloft: this.aloft, medal, next, isBest, share,
+    });
   }
 
   addScore(n) { this.score += n; }

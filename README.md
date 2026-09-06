@@ -17,10 +17,18 @@ phone, open it in landscape and tilt to steer.
 | `Space` | fire |
 | `Shift` / `Ctrl` | boost / brake |
 | `I` / `C` | invert pitch / recenter tilt |
+| `T` | today's flight |
 | `M` / `Esc` | mute / quit to title |
 
 Phones: tilt like a steering wheel to roll, tip the top edge toward you to climb, hold FIRE and BOOST. The `?` on the
 title screen has the full list.
+
+**Today's flight** is one seeded run per calendar day: where you start, where each wave's portal opens and how each
+wave is composed all come from the date, so everyone who flies today flies the same day. The title shows the date and
+your best for it; free play is unchanged. A run ends in a debrief (waves, kills, accuracy, best combo, clean streak,
+time aloft) with a copy-result button on the daily that puts a one-line score with medal squares on the clipboard.
+Medals are earned once and shown as pips on the title: bronze, silver and gold wings for waves 3, 6 and 10, and three
+secret ones for how you fly.
 
 Bandits arrive through a portal each wave and come in bigger packs. They hunt in passes: after a pass, or after
 sitting on your tail for a few seconds, a bandit breaks off and cruises about before coming back, and only part of
@@ -74,6 +82,7 @@ note is generated in code.
 | `src/boxes.js`, `src/plane.js` | the instanced box batches and the plane as data |
 | `src/aircraft.js`, `src/ai.js`, `src/bullets.js` | flight model, bandit brains, tracers |
 | `src/game.js`, `src/portal.js` | waves, scoring, damage, camera, the arrival portal |
+| `src/daily.js`, `src/medals.js` | the seeded daily flight and the share line, the medal list and its storage |
 | `src/effects.js`, `src/trails.js` | particles, wreckage, vapor ribbons and wakes |
 | `src/hud.js`, `src/title.js` | DOM HUD and screens, the voxel title |
 | `src/audio.js`, `src/music.js`, `src/scores.js`, `src/ks.worklet.js` | sound effects, the music engine, the two themes |
