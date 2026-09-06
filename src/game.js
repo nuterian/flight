@@ -65,6 +65,7 @@ export class Game {
     this.deathBack = new THREE.Vector3(0, 0, 1);
     this.camKick = 0;
     this.fov = 62;
+    this.alpha = 1;   // how far the frame sits between the last two sim steps (set by the loop)
     this.best = Number(store.get('skyfight.best') || 0);
     this.bestWave = Number(store.get('skyfight.bestwave') || 0);
     this.hud.text('best', String(this.best));
@@ -619,6 +620,9 @@ export class Game {
   render(dt) {
     if (this.state === 'title') { this.idle(); this.audio.setFlight(0, 0, false, dt); this.audio.setAmbience(0); return; }
     if (this.state === 'gameover') this.hud.tickDebrief(dt);
+    // draw every plane between its last two sim states, then place the camera on the drawn pose
+    if (this.player.alive) this.present(this.player);
+    for (const e of this.enemies) if (e.ac.alive) this.present(e.ac);
     this.updateCamera(dt);
     const alive = this.player.alive && this.state === 'playing';
     this.audio.setFlight(alive ? this.player.speed : 0, alive ? this.player.input.throttle : 0, alive && this.outside, dt, alive ? this.player.health / this.player.maxHealth : 1);
@@ -629,7 +633,7 @@ export class Game {
       this.hud.updateStats({ score: this.score, wave: this.wave, enemies: (this.aliveCount || 0) + this.pending, total: this.waveSize || 0, health: p.health, maxHealth: p.maxHealth, speed: p.speed, maxSpeed: PLAYER_STATS.maxSpeed * 1.2, boost: p.input.throttle > 0, firing: this.input.fire, combo: this.combo > 0 ? this.comboTimer / 2.5 : 0 }, dt);
       const lead = this.computeLead(this.targetList);
       if (this.world.landmarks) for (const l of this.world.landmarks.list) l.found = this.found.has(l.id);
-      this.hud.updateOverlay(this.camera, p, this.targetList, lead.point, lead.locked, this.portal.active ? this.portal.pos : null, this.world.landmarks ? this.world.landmarks.list : null);
+      this.hud.updateOverlay(this.camera, { pos: p.renderPos, forward: p.renderForward }, this.targetList, lead.point, lead.locked, this.portal.active ? this.portal.pos : null, this.world.landmarks ? this.world.landmarks.list : null);
     }
   }
 
@@ -650,6 +654,16 @@ export class Game {
       tv.copy(ac.pos).addScaledVector(ac.forward, -4.5);
       this.effects.trailSmoke(tv, ac.velocity, frac < 0.25);
     }
+  }
+
+  /** A plane drawn between its last two sim states, with its vapour ribbons glued to the drawn wingtips. */
+  present(ac) {
+    ac.present(this.alpha);
+    const right = tv2.set(1, 0, 0).applyQuaternion(ac.renderQuat);
+    tv.copy(ac.renderPos).addScaledVector(right, 7.9).addScaledVector(ac.renderForward, -0.9);
+    this.trails.glue(ac.trails[0], tv, ac.renderUp);
+    tv.copy(ac.renderPos).addScaledVector(right, -7.9).addScaledVector(ac.renderForward, -0.9);
+    this.trails.glue(ac.trails[1], tv, ac.renderUp);
   }
 
   /** Contrails: the wingtips draw in the cold air high up, fading in over the last sixty units of the climb. */
@@ -775,23 +789,23 @@ export class Game {
     }
     if (this.snapCam) {   // back from the kill cam: no long lerp, just cut to the chase view
       this.snapCam = false;
-      this.camQuat.copy(p.quat);
-      this.camPos.set(0, 6.5, 25).applyQuaternion(this.camQuat).add(p.pos);
+      this.camQuat.copy(p.renderQuat);
+      this.camPos.set(0, 6.5, 25).applyQuaternion(this.camQuat).add(p.renderPos);
       this.fov = 62;
     }
     // The camera follows the nose more slowly through a hard roll and slides to the outside of the turn.
     const turn = clamp(Math.abs(p.rollVel) / p.stats.rollRate, 0, 1);
-    this.camQuat.slerp(p.quat, 1 - Math.exp(-dt * (5 - 2.2 * turn)));
+    this.camQuat.slerp(p.renderQuat, 1 - Math.exp(-dt * (5 - 2.2 * turn)));
     const boost = p.input.throttle > 0 ? 1 : 0;
     this.camKick *= Math.exp(-dt * 14);
-    tv.set(-p.rollVel * 0.9, 6.5, 25 + boost * 3 + this.camKick * 0.6).applyQuaternion(this.camQuat).add(p.pos);
+    tv.set(-p.rollVel * 0.9, 6.5, 25 + boost * 3 + this.camKick * 0.6).applyQuaternion(this.camQuat).add(p.renderPos);
     this.camPos.lerp(tv, 1 - Math.exp(-dt * 18));
     cam.position.copy(this.camPos);
     if (fx.shake > 0) cam.position.add(tv2.set(rnd(-1, 1), rnd(-1, 1), rnd(-1, 1)).multiplyScalar(fx.shake * 1.4));
     const minY = groundAt(cam.position.x, cam.position.z) + 3;
     if (cam.position.y < minY) cam.position.y = minY;
     cam.up.copy(tv2.set(0, 1, 0).applyQuaternion(this.camQuat)).lerp(WORLD_UP, 0.45).normalize();
-    tv.copy(p.pos).addScaledVector(p.forward, 38).addScaledVector(p.up, 2);
+    tv.copy(p.renderPos).addScaledVector(p.renderForward, 38).addScaledVector(p.renderUp, 2);
     cam.lookAt(tv);
     if (fx.shake > 0) cam.rotateZ(rnd(-1, 1) * fx.shake * 0.02);
     const targetFov = 62 + boost * 9 + Math.max(0, p.speed - PLAYER_STATS.cruise) * 0.08 + this.camKick * 1.5;

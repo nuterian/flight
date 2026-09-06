@@ -16,6 +16,12 @@ export class Aircraft {
     this.pos = new THREE.Vector3();
     this.quat = new THREE.Quaternion();
     this.matrix = new THREE.Matrix4();
+    // The pose before the last sim step, and the pose the frame draws: the sim runs at a fixed 120 Hz while frames
+    // land whenever they land, so a frame is drawn between the last two sim states by the accumulator fraction.
+    // Without this a frame that gets three steps instead of two jumps the plane against the smoothed camera.
+    this.prevPos = new THREE.Vector3(); this.prevQuat = new THREE.Quaternion();
+    this.renderPos = new THREE.Vector3(); this.renderQuat = new THREE.Quaternion();
+    this.renderForward = new THREE.Vector3(0, 0, -1); this.renderUp = new THREE.Vector3(0, 1, 0);
     this.stats = stats;
     this.team = team;
     this.speed = stats.cruise;
@@ -44,6 +50,16 @@ export class Aircraft {
     this.flex = 0; this.gear = speed > GEAR_UP_SPEED ? 0 : 1;
     this.plane.lostTip = -1; this.scorchLevel = 0; this.plane.scorch(0); this.shedTip = false;
     this.updateAxes();
+    this.prevPos.copy(pos); this.prevQuat.copy(quat);
+    this.present(1);
+  }
+
+  /** Interpolates the drawn pose between the previous and the current sim state and writes the boxes. */
+  present(alpha) {
+    this.renderPos.lerpVectors(this.prevPos, this.pos, alpha);
+    this.renderQuat.slerpQuaternions(this.prevQuat, this.quat, alpha);
+    this.renderForward.copy(NEG_Z).applyQuaternion(this.renderQuat);
+    this.renderUp.copy(Y).applyQuaternion(this.renderQuat);
     this.sync();
   }
 
@@ -55,8 +71,8 @@ export class Aircraft {
     const roll = Math.sin(t * 1.1) * 0.01 + this.rollVel * 0.06 + inp.yaw * 0.12;   // lean into the roll, bank with the rudder
     const yaw = this.yawVel * 0.1;
     vq.setFromAxisAngle(X, pitch).multiply(tq.setFromAxisAngle(NEG_Z, roll)).multiply(tq2.setFromAxisAngle(NEG_Y, yaw));
-    vq.premultiply(this.quat);
-    vp.copy(this.pos).addScaledVector(this.up, Math.sin(t * 1.3) * 0.15);
+    vq.premultiply(this.renderQuat);
+    vp.copy(this.renderPos).addScaledVector(this.renderUp, Math.sin(t * 1.3) * 0.15);
     const frac = this.health / this.maxHealth;
     // nearly dead: the gear hangs loose and swings
     const dangle = frac < 0.2 ? 0.45 + Math.sin(t * 5.3) * 0.12 : 0;
@@ -77,6 +93,7 @@ export class Aircraft {
 
   update(dt) {
     const s = this.stats, inp = this.input, q = this.quat;
+    this.prevPos.copy(this.pos); this.prevQuat.copy(this.quat);
     const k = Math.min(1, dt * 7);
     this.pitchVel += (inp.pitch * s.pitchRate - this.pitchVel) * k;
     this.rollVel += (inp.roll * s.rollRate - this.rollVel) * k;
@@ -131,7 +148,6 @@ export class Aircraft {
     } else { yaw = Math.sin(this.age * 0.6) * 0.3; pitch = Math.sin(this.age * 0.9) * 0.08; }
     const k3 = Math.min(1, dt * 5);
     this.headYaw += (yaw - this.headYaw) * k3; this.headPitch += (pitch - this.headPitch) * k3;
-    this.sync();
     if (this.gunTimer > 0) this.gunTimer -= dt;
     if (this.hitFlash > 0) this.hitFlash -= dt;
   }

@@ -237,8 +237,9 @@ async function boot() {
     let steps = 0;
     while (acc >= STEP && steps < 6) { game.update(STEP); acc -= STEP; steps++; }
     if (steps === 6) acc = 0;
+    game.alpha = acc / STEP;   // the frame falls this far between the last two sim steps
     game.render(frame);
-    world.update(frame, now / 1000, game.player.pos, camera, game.player.alive ? game.player.speed : 0);
+    world.update(frame, now / 1000, game.player.renderPos, camera, game.player.alive ? game.player.speed : 0);
     title.update(frame, now / 1000, camera, game.state === 'title');
     lit.flush(); glow.flush(); soft.flush();
     pipeline.render();

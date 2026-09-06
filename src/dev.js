@@ -12,8 +12,9 @@ export function attachDevHooks({ game, input, world, camera, pipeline, renderer,
   const frame = (seconds) => {
     if (useTitleLens) useTitleLens(game.state === 'title');
     if (menuMusic) menuMusic();
+    game.alpha = 1;
     game.render(seconds);
-    world.update(seconds, performance.now() / 1000, game.player.pos, camera, game.player.alive ? game.player.speed : 0);
+    world.update(seconds, performance.now() / 1000, game.player.renderPos, camera, game.player.alive ? game.player.speed : 0);
     if (title) title.update(seconds, performance.now() / 1000, camera, game.state === 'title');
     for (const b of boxes) b.flush();
     // Per-frame passes (scene, bloom, dof) only re-render when the node frame advances, which the renderer's own

@@ -53,6 +53,19 @@ export class Trails {
     }
   }
 
+  /** Re-attaches a ribbon's head to the emitter without taking a sample: the drawn plane sits between two sim
+   *  states, so the head is moved onto the drawn wingtip each frame. */
+  glue(r, position, side) {
+    const n = this.n, head = this.ribbons[r].points[n - 1];
+    head.p.copy(position); head.side.copy(side);
+    const w = this.width * (this.widen ? 1.6 - head.a : 0.4 + head.a * 0.8);
+    tmp.copy(side).multiplyScalar(w);
+    const o = (r * n + n - 1) * 6;
+    this.pos[o] = position.x + tmp.x; this.pos[o + 1] = position.y + tmp.y; this.pos[o + 2] = position.z + tmp.z;
+    this.pos[o + 3] = position.x - tmp.x; this.pos[o + 4] = position.y - tmp.y; this.pos[o + 5] = position.z - tmp.z;
+    if (this.mesh.visible) this.mesh.geometry.attributes.position.needsUpdate = true;
+  }
+
   update(dt) {
     let any = false;
     const n = this.n, fade = this.fade, widen = this.widen;
