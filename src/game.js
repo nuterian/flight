@@ -603,7 +603,7 @@ export class Game {
       const enemiesAlive = this.aliveEnemies();
       this.hud.updateStats({ score: this.score, wave: this.wave, enemies: (this.aliveCount || 0) + this.pending, total: this.waveSize || 0, health: p.health, maxHealth: p.maxHealth, speed: p.speed, maxSpeed: PLAYER_STATS.maxSpeed * 1.2, boost: p.input.throttle > 0, firing: this.input.fire }, dt);
       const lead = this.computeLead(this.targetList);
-      this.hud.updateOverlay(this.camera, p, this.targetList, lead.point, lead.locked);
+      this.hud.updateOverlay(this.camera, p, this.targetList, lead.point, lead.locked, this.portal.active ? this.portal.pos : null);
     }
   }
 

@@ -123,13 +123,15 @@ export class Plane {
     if (this.soft) this.soft.color(this.disc, scheme.trim);
   }
 
-  /** Battle damage on the paint: 0 = factory fresh, 1 = charred. Also crazes the windscreen past half. */
-  scorch(t) {
+  /** Battle damage on the paint: 0 = factory fresh, 1 = charred. Also crazes the windscreen past half. `flash`
+   *  whitens the whole airframe for the frames after a hit lands. */
+  scorch(t, flash = 0) {
     const b = this.boxes;
     this.fixed.forEach((f, k) => {
-      if (typeof f[6] === 'string') b.color(this.base + k, tmpC.set(this.scheme[f[6]]).lerp(scorchC, t * 0.65));
+      if (typeof f[6] === 'string') b.color(this.base + k, tmpC.set(this.scheme[f[6]]).lerp(scorchC, t * 0.65).lerp(crazeC, flash));
       else b.color(this.base + k, tmpC.set(f[6]).lerp(crazeC, t > 0.5 ? 0.8 : 0));
     });
+    this.extras.forEach((e, k) => b.color(this.base + EXTRA_OFFSET + k, tmpC.set(this.scheme[e[6]]).lerp(scorchC, t * 0.65).lerp(crazeC, flash)));
   }
 
   place(world) {

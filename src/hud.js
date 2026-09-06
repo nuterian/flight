@@ -12,7 +12,7 @@ export class Hud {
       hud: $('hud'), score: $('score'), wave: $('wave'), enemies: $('enemies'), health: $('health'), speed: $('speed'),
       crosshair: $('crosshair'), lead: $('leadret'), markers: $('markers'), banner: $('banner'), warning: $('warning'),
       vignette: $('vignette'), title: $('title'), gameover: $('gameover'), best: $('best'), newbest: $('newbest'), touch: $('touch'),
-      dbmode: $('dbmode'), dbscore: document.querySelector('#gameover .scoreline'), dbtiles: $('dbtiles'), dblog: $('dblog'), dbmedal: $('dbmedal'), share: $('btn-share'), gohint: $('gohint'), medals: $('medals'), dailyinfo: $('dailyinfo'),
+      portal: $('portalmark'), dbmode: $('dbmode'), dbscore: document.querySelector('#gameover .scoreline'), dbtiles: $('dbtiles'), dblog: $('dblog'), dbmedal: $('dbmedal'), share: $('btn-share'), gohint: $('gohint'), medals: $('medals'), dailyinfo: $('dailyinfo'),
       healthwrap: $('healthwrap'), killfeed: $('killfeed'), combo: $('combo'), mute: $('mute'), pips: $('pips'), speedbar: $('speedbar'), btnMute: $('btn-mute'),
     };
     this.pipCount = 0;
@@ -116,8 +116,8 @@ export class Hud {
     if (this.cache.vignette !== vk) { this.cache.vignette = vk; this.el.vignette.style.opacity = a.toFixed(2); }
   }
 
-  /** Project world positions into HUD elements. */
-  updateOverlay(camera, player, enemies, leadPoint, locked) {
+  /** Project world positions into HUD elements. `portal` is the open portal's position, or null. */
+  updateOverlay(camera, player, enemies, leadPoint, locked, portal = null) {
     const W = innerWidth, H = innerHeight;
     const place = (el, p) => {
       v.copy(p).project(camera);
@@ -164,6 +164,23 @@ export class Hud {
       }
     }
     for (let i = n; i < this.markerPool.length; i++) this.markerPool[i].style.display = 'none';
+    const pm = this.el.portal;
+    if (!portal) { pm.style.display = 'none'; return; }
+    v.copy(portal).project(camera);
+    const behind = v.z > 1;
+    let x = behind ? -v.x : v.x, y = behind ? -v.y : v.y;
+    const inView = !behind && Math.abs(x) < 0.95 && Math.abs(y) < 0.95;
+    pm.style.display = 'block';
+    pm.classList.toggle('edge', !inView);
+    if (inView) { pm.style.left = `${(x + 1) * 0.5 * W}px`; pm.style.top = `${(1 - y) * 0.5 * H}px`; pm.style.transform = 'rotate(45deg)'; }
+    else {
+      const len = Math.hypot(x, y) || 1;
+      let dx = x / len, dy = y / len;
+      const k = 1 / Math.max(Math.abs(dx), Math.abs(dy));
+      dx *= k * 0.9; dy *= k * 0.86;
+      pm.style.left = `${(dx + 1) * 0.5 * W}px`; pm.style.top = `${(1 - dy) * 0.5 * H}px`;
+      pm.style.transform = `rotate(${Math.atan2(dx, dy) + Math.PI * 0.75}rad)`;
+    }
   }
 
   resetScore() { this.shownScore = 0; this.flash = 0; this.el.killfeed.replaceChildren(); this.comboOff(); }

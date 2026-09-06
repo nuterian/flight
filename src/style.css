@@ -90,6 +90,11 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: #6ec1ff; fon
 #combo.pop { animation: comboPop 0.45s var(--spring); }
 @keyframes comboPop { 0% { transform: translateX(-50%) scale(2.8) rotate(-8deg); filter: brightness(1.6); } 100% { transform: translateX(-50%) scale(1); } }
 #crosshair.whiz { animation: whiz 0.25s ease-out; }
+/* the portal: a teal diamond that sits on it, or points at it from the edge of the screen, while it is open */
+#portalmark { position: absolute; display: none; width: 18px; height: 18px; margin: -9px 0 0 -9px; border: 2px solid #3fe6d4; box-shadow: 0 0 10px rgba(63,230,212,0.7), inset 0 0 6px rgba(63,230,212,0.5); transform: rotate(45deg); animation: portalPulse 1.1s ease-in-out infinite; }
+#portalmark span { position: absolute; left: 50%; top: 50%; width: 6px; height: 6px; margin: -3px; background: #3fe6d4; }
+#portalmark.edge { border-radius: 2px 50% 50% 50%; }
+@keyframes portalPulse { 50% { box-shadow: 0 0 18px rgba(63,230,212,0.95), inset 0 0 8px rgba(63,230,212,0.8); } }
 @keyframes whiz { 0% { transform: scale(1.6); filter: drop-shadow(0 0 6px var(--coral)) brightness(1.6); } 100% { transform: scale(1); } }
 #score.bump { display: inline-block; animation: bump 0.35s var(--spring); }
 @keyframes bump { 0% { transform: scale(1.4); color: var(--sun); } 100% { transform: scale(1); } }

@@ -34,7 +34,7 @@ export class Aircraft {
     this.age = Math.random() * 10; this.flex = 0; this.gear = 0;
     this.lookTarget = null;             // a Vector3 the pilot keeps an eye on
     this.headYaw = 0; this.headPitch = 0;
-    this.scorchLevel = 0; this.shedTip = false;
+    this.scorchLevel = 0; this.shedTip = false; this.flashShown = 0;
   }
 
   reset(pos, quat, speed = this.stats.cruise) {
@@ -118,7 +118,9 @@ export class Aircraft {
     this.gear += ((this.speed > GEAR_UP_SPEED ? 0 : 1) - this.gear) * Math.min(1, dt * 1.6);
     // battle damage: paint scorches in steps, a wingtip goes at half health
     const bucket = Math.min(5, Math.floor((1 - frac) * 5 + 0.001));
-    if (bucket !== this.scorchLevel) { this.scorchLevel = bucket; this.plane.scorch(bucket / 5); }
+    // a hit whitens the airframe for a tenth of a second (the paint is only rewritten when the state changes)
+    const flash = this.hitFlash > 0 && this.team === 1 ? 1 : 0;
+    if (bucket !== this.scorchLevel || flash !== this.flashShown) { this.scorchLevel = bucket; this.flashShown = flash; this.plane.scorch(bucket / 5, flash * 0.75); }
     if (frac < 0.5 && this.plane.lostTip < 0) { this.plane.lostTip = Math.random() < 0.5 ? 0 : 1; this.shedTip = true; }
     // the pilot: track the target (over the shoulder if it's behind), otherwise idly look around
     let yaw, pitch;

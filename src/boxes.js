@@ -54,7 +54,10 @@ export class Boxes {
     for (let i = 0; i < capacity; i++) this.mesh.setMatrixAt(i, ZERO);
     this.mesh.count = 0;
     this.capacity = capacity; this.top = 0; this.free = [];
-    this.lo = Infinity; this.hi = -1;
+    // Dirty tracking in buckets of 256 slots: a frame touches a few hundred scattered slots (animated props,
+    // planes, particles), so uploading only the dirty buckets, merged into runs, beats one span over all of them.
+    this.dirty = new Uint8Array(Math.ceil(capacity / BUCKET) + 1);
+    this.any = false;
     scene.add(this.mesh);
   }
 
@@ -67,7 +70,7 @@ export class Boxes {
   release(i) { this.hide(i); this.free.push(i); }
   hide(i, n = 1) { for (let k = 0; k < n; k++) this.matrix(i + k, ZERO); }
 
-  touch(i) { if (i < this.lo) this.lo = i; if (i > this.hi) this.hi = i; }
+  touch(i) { this.dirty[i >> BUCKET_SHIFT] = 1; this.any = true; }
   matrix(i, mtx) { this.mesh.setMatrixAt(i, mtx); this.touch(i); }
   color(i, c, mul = 1) { this.mesh.setColorAt(i, col.set(c).multiplyScalar(mul)); this.touch(i); }
   scalar(i, v) { this.param.setX(i, v); this.touch(i); }
@@ -79,20 +82,32 @@ export class Boxes {
   /** Place a run of boxes under a parent matrix. */
   place(start, locals, parent) {
     for (let k = 0; k < locals.length; k++) this.mesh.setMatrixAt(start + k, m.multiplyMatrices(parent, locals[k]));
-    this.touch(start); this.touch(start + locals.length - 1);
+    for (let b = start >> BUCKET_SHIFT, last = (start + locals.length - 1) >> BUCKET_SHIFT; b <= last; b++) this.dirty[b] = 1;
+    this.any = true;
   }
 
-  /** Upload only the slots touched since the last flush. Call once per frame. */
+  /** Upload only the buckets touched since the last flush, each run of them as one range. Call once per frame. */
   flush() {
     this.mesh.count = this.top;
-    if (this.hi < 0) return;
-    const n = this.hi - this.lo + 1;
-    for (const [attr, w] of [[this.mesh.instanceMatrix, 16], [this.mesh.instanceColor, 3], [this.param, 1]]) {
-      attr.clearUpdateRanges(); attr.addUpdateRange(this.lo * w, n * w); attr.needsUpdate = true;
+    if (!this.any) return;
+    const attrs = [this.mesh.instanceMatrix, this.mesh.instanceColor, this.param];
+    for (const a of attrs) a.clearUpdateRanges();
+    const d = this.dirty, nb = Math.ceil(this.top / BUCKET);
+    for (let b = 0; b < nb; b++) {
+      if (!d[b]) continue;
+      let e = b;
+      while (e + 1 < nb && d[e + 1]) e++;
+      const lo = b * BUCKET, n = Math.min(this.top, (e + 1) * BUCKET) - lo;
+      this.mesh.instanceMatrix.addUpdateRange(lo * 16, n * 16);
+      this.mesh.instanceColor.addUpdateRange(lo * 3, n * 3);
+      this.param.addUpdateRange(lo, n);
+      b = e;
     }
-    this.lo = Infinity; this.hi = -1;
+    for (const a of attrs) a.needsUpdate = true;
+    d.fill(0); this.any = false;
   }
 }
+const BUCKET_SHIFT = 8, BUCKET = 1 << BUCKET_SHIFT;
 
 /** A box's local matrix inside a group. */
 export const local = (x, y, z, sx, sy, sz) => new THREE.Matrix4().compose(new THREE.Vector3(x, y, z), new THREE.Quaternion(), new THREE.Vector3(sx, sy, sz));
