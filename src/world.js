@@ -72,38 +72,52 @@ function bakeOcclusion() {
   const N = HALF_CELLS, W = 2 * N + 2, size = W * W;
   const top = new Float32Array(size);
   for (let i = -N - 1; i <= N; i++) for (let j = -N - 1; j <= N; j++) top[(i + N + 1) * W + (j + N + 1)] = cellTop(i, j);
-  const at = (a, b) => top[Math.min(W - 1, Math.max(0, a)) * W + Math.min(W - 1, Math.max(0, b))];
   const data = new Uint8Array(size * 4);
+  // sky visibility: the steepest slope up in each of eight directions, one atan per direction
   const DIRS = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]], STEPS = [1, 2, 3, 5, 8, 12];
+  const offs = DIRS.map(([da, db]) => STEPS.map((s) => [da * s * W + db * s, 1 / (s * CELL * (da && db ? 1.414 : 1))]));
+  const PAD = 12;
   for (let a = 0; a < W; a++) for (let b = 0; b < W; b++) {
-    const h = top[a * W + b];
+    const c = a * W + b, h = top[c];
+    const inside = a >= PAD && a < W - PAD && b >= PAD && b < W - PAD;
     let occ = 0;
-    for (const [da, db] of DIRS) {
+    for (let k = 0; k < 8; k++) {
       let best = 0;
-      for (const s of STEPS) { const ang = Math.atan2(at(a + da * s, b + db * s) - h, s * CELL * (da && db ? 1.414 : 1)); if (ang > best) best = ang; }
-      occ += Math.min(1, best / (Math.PI * 0.5));
+      const o = offs[k];
+      if (inside) { for (let q = 0; q < 6; q++) { const sl = (top[c + o[q][0]] - h) * o[q][1]; if (sl > best) best = sl; } }
+      if (best > 0) occ += Math.min(1, Math.atan(best) / (Math.PI * 0.5));
     }
-    occ /= DIRS.length;
-    data[(a * W + b) * 4] = Math.round(255 * (1 - 0.8 * Math.pow(occ, 1.1)));
+    occ /= 8;
+    data[c * 4] = Math.round(255 * (1 - 0.8 * Math.pow(occ, 1.1)));
   }
-  // sun occlusion on every other cell, copied into its 2x2 block; linear filtering softens the edges
+  // sun occlusion on every other cell (copied into its 2x2 block; linear filtering softens the edges): march toward
+  // the sun along precomputed grid offsets and stop at the first higher ground that blocks it
   const presets = ['morning', 'noon', 'golden'];
   presets.forEach((name, k) => {
     const d = TIMES[name].dir, hl = Math.hypot(d[0], d[2]), ux = d[0] / hl, uz = d[2] / hl, slope = d[1] / hl;
+    const steps = [];
+    for (let s = 1; s <= 64; s += s < 16 ? 1 : 2) steps.push([Math.round(ux * s) * W + Math.round(uz * s), s * CELL * slope + 0.6, Math.round(ux * s), Math.round(uz * s)]);
+    const M = 66;
     for (let a = 0; a < W; a += 2) for (let b = 0; b < W; b += 2) {
-      const h = top[a * W + b];
+      const c = a * W + b, h = top[c];
       let lit = 255;
-      for (let s = 1; s <= 64; s += s < 16 ? 1 : 2) {
-        const hh = at(Math.round(a + ux * s), Math.round(b + uz * s));   // grid a runs along x, b along z
-        if (hh > h + s * CELL * slope + 0.6) { lit = 0; break; }
+      const inside = a >= M && a < W - M && b >= M && b < W - M;
+      for (let q = 0; q < steps.length; q++) {
+        const st = steps[q];
+        let hh;
+        if (inside) hh = top[c + st[0]];
+        else { const aa = Math.min(W - 1, Math.max(0, a + st[2])), bb = Math.min(W - 1, Math.max(0, b + st[3])); hh = top[aa * W + bb]; }
+        if (hh > h + st[1]) { lit = 0; break; }
       }
-      for (let da = 0; da < 2; da++) for (let db = 0; db < 2; db++) { const aa = Math.min(W - 1, a + da), bb = Math.min(W - 1, b + db); data[(aa * W + bb) * 4 + 1 + k] = lit; }
+      data[c * 4 + 1 + k] = lit;
+      if (b + 1 < W) data[(c + 1) * 4 + 1 + k] = lit;
+      if (a + 1 < W) { data[(c + W) * 4 + 1 + k] = lit; if (b + 1 < W) data[(c + W + 1) * 4 + 1 + k] = lit; }
     }
   });
   const tex = new THREE.DataTexture(data, W, W, THREE.RGBAFormat);
   tex.magFilter = tex.minFilter = THREE.LinearFilter; tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping; tex.needsUpdate = true;
-  bake.tex = tex;
-  console.info(`baked occlusion: ${W}x${W} in ${Math.round(performance.now() - t0)} ms`);
+  bake.tex = tex; bake.ms = Math.round(performance.now() - t0);
+  console.info(`baked occlusion: ${W}x${W} in ${bake.ms} ms`);
 }
 /** The bake sampled at this pixel's world position. */
 function bakeSample() {
@@ -996,5 +1010,5 @@ export function createWorld(scene, { mobile, lit, glow, soft }) {
 
   /** Distance to the nearest big waterfall (for its rumble). */
   const nearestFall = (pos) => { let d = Infinity; for (const f of bigFalls) d = Math.min(d, Math.hypot(pos.x - f.x, pos.y - f.y, pos.z - f.z)); return d; };
-  return { update, setDanger: bounds.setDanger, props, nearestFall, bigFalls, sunScreen, smear, clouds: clouds.clouds, brushPalms: props.brushPalms, scare: props.scare, setTimeOfDay, get timeOfDay() { return timeOfDay; }, landmarks, arenas, shadow };
+  return { update, setDanger: bounds.setDanger, props, nearestFall, bigFalls, sunScreen, smear, clouds: clouds.clouds, brushPalms: props.brushPalms, scare: props.scare, setTimeOfDay, get timeOfDay() { return timeOfDay; }, landmarks, arenas, shadow, bakeMs: bake.ms };
 }
