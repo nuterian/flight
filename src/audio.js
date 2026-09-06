@@ -17,7 +17,7 @@ export class Sound {
     document.addEventListener('visibilitychange', wake);
     window.addEventListener('keydown', wake); window.addEventListener('pointerdown', wake);
     this.warnTimer = 0; this.warnHi = false; this.beatTimer = 0;
-    this.lastGun = 0; this.lastHit = 0; this.lastWhiz = 0;
+    this.lastGun = 0; this.lastHit = 0; this.lastWhiz = 0; this.lastDive = 0;
   }
 
   /** Creates the graph. Must be called from a user gesture (start). */
@@ -156,6 +156,22 @@ export class Sound {
   portalPop() { if (!this.ctx) return; this.tone(880, 'sine', 0.12, 0.13); this.tone(1320, 'sine', 0.2, 0.1, 0.06); }
   /** Punching through top speed. */
   boom() { if (!this.ctx) return; this.burst(320, 'lowpass', 0.28, 0.5, 0.005); this.blip(95, 38, 'sine', 0.32, 0.55); }
+
+  /** An interceptor diving on you: a rising siren, louder the closer it is. */
+  dive(dist = 300) {
+    if (!this.ctx) return;
+    const t = this.ctx.currentTime;
+    if (t - this.lastDive < 1.2) return;
+    this.lastDive = t;
+    const a = atten(dist) * 0.9;
+    const ctx = this.ctx;
+    const o = ctx.createOscillator(); o.type = 'sawtooth';
+    o.frequency.setValueAtTime(420, t); o.frequency.exponentialRampToValueAtTime(980, t + 1.1);
+    const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 1400;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.11 * a, t + 0.15); g.gain.setValueAtTime(0.11 * a, t + 0.9); g.gain.exponentialRampToValueAtTime(0.0001, t + 1.2);
+    o.connect(lp); lp.connect(g); g.connect(this.bus); o.start(t); o.stop(t + 1.25);
+  }
 
   /** A bullet whistling past: a short high crack with a falling tail. */
   whiz() {

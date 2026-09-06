@@ -87,6 +87,7 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: #6ec1ff; fon
 @keyframes kfOut { to { opacity: 0; transform: translateX(24px); } }
 #combo { position: absolute; left: 50%; top: 36%; transform: translateX(-50%); font-size: 30px; font-weight: 900; color: var(--sun); letter-spacing: 0.12em; text-shadow: 0 3px 0 rgba(0,0,0,0.3); opacity: 0; transition: opacity 0.25s; }
 #combo.show { opacity: 1; }
+#combo::after { content: ""; display: block; height: 3px; width: var(--left, 100%); margin: 4px auto 0; border-radius: 2px; background: var(--sun); box-shadow: 0 0 6px rgba(255,209,102,0.6); transition: width 0.1s linear; }
 #combo.pop { animation: comboPop 0.45s var(--spring); }
 @keyframes comboPop { 0% { transform: translateX(-50%) scale(2.8) rotate(-8deg); filter: brightness(1.6); } 100% { transform: translateX(-50%) scale(1); } }
 #crosshair.whiz { animation: whiz 0.25s ease-out; }
@@ -121,6 +122,8 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: #6ec1ff; fon
 .intro { text-align: center; padding: 0 24px calc(34px + env(safe-area-inset-bottom)); color: var(--cream); text-shadow: var(--hud-shadow); animation: introIn 0.8s var(--spring) 0.9s both; }
 @keyframes introIn { from { opacity: 0; transform: translateY(24px); } to { opacity: 1; transform: none; } }
 .intro .tag { margin: 0 0 14px; font-size: 16px; opacity: 0.85; }
+.intro .tip { margin: 12px 0 0; font-size: 12px; letter-spacing: 0.08em; opacity: 0.6; min-height: 1.4em; transition: opacity 0.4s; }
+.intro .tip.fade { opacity: 0; }
 .intro .press { margin: 0 0 18px; font-size: 15px; }
 .quick { display: flex; align-items: center; justify-content: center; gap: 10px; }
 .quick > div { display: flex; align-items: center; gap: 2px; padding: 8px 14px 8px 8px; border-radius: 999px; background: var(--hud-shade); backdrop-filter: blur(6px); font-size: 13px; font-weight: 700; letter-spacing: 0.06em; }

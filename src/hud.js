@@ -102,7 +102,10 @@ export class Hud {
     }
   }
 
-  updateStats({ score, wave, enemies, total, health, maxHealth, speed, maxSpeed, boost, firing }, dt) {
+  updateStats({ score, wave, enemies, total, health, maxHealth, speed, maxSpeed, boost, firing, combo = 0 }, dt) {
+    // the combo window: a bar under the combo text that runs out as the chain is about to break
+    const ck = Math.round(combo * 40);
+    if (this.cache.combo !== ck) { this.cache.combo = ck; this.el.combo.style.setProperty('--left', `${(ck / 40 * 100).toFixed(1)}%`); }
     // the score ticks toward the real value instead of jumping
     if (this.shownScore !== score) {
       const diff = score - this.shownScore;

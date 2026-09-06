@@ -524,6 +524,7 @@ export class Game {
       if (!ac.alive) continue;
       alive++;
       e.brain.update(dt, p, pack);
+      ac.barrel = e.brain.state === 'barrel';
       ac.lookTarget = p.alive ? p.pos : null;
       ac.update(dt);
       this.shedTip(ac);
@@ -533,6 +534,12 @@ export class Game {
         if (e.far > 35) { this.recallStraggler(e); continue; }
       }
       if (e.brain.wantsFire && p.alive && this.wave > 1) this.fire(ac, this.enemyBullets, 4 + this.wave * 0.5, 0.02 + (1 - e.brain.skill) * 0.03, 8);
+      // the interceptor's dive: a siren as it comes down on you, once per dive
+      if (e.type === 'interceptor' && e.brain.state === 'pursue') {
+        const diving = ac.forward.y < -0.35 && ac.pos.y > p.pos.y + 40 && ac.pos.distanceToSquared(p.pos) < 420 * 420;
+        if (diving && !e.sirened) { e.sirened = true; this.audio.dive(ac.pos.distanceTo(p.pos)); }
+        else if (!diving && ac.pos.y > p.pos.y + 120) e.sirened = false;
+      }
       if (ac.pos.y < groundAt(ac.pos.x, ac.pos.z) + 2) {
         this.killAircraft(ac, 0.8); this.registerKill('BANDIT CRASHED', 40, ac.pos); if (isWaterAt(ac.pos.x, ac.pos.z)) this.effects.splash(ac.pos);
         continue;
@@ -617,7 +624,7 @@ export class Game {
     if (this.state === 'playing') {
       const p = this.player;
       const enemiesAlive = this.aliveEnemies();
-      this.hud.updateStats({ score: this.score, wave: this.wave, enemies: (this.aliveCount || 0) + this.pending, total: this.waveSize || 0, health: p.health, maxHealth: p.maxHealth, speed: p.speed, maxSpeed: PLAYER_STATS.maxSpeed * 1.2, boost: p.input.throttle > 0, firing: this.input.fire }, dt);
+      this.hud.updateStats({ score: this.score, wave: this.wave, enemies: (this.aliveCount || 0) + this.pending, total: this.waveSize || 0, health: p.health, maxHealth: p.maxHealth, speed: p.speed, maxSpeed: PLAYER_STATS.maxSpeed * 1.2, boost: p.input.throttle > 0, firing: this.input.fire, combo: this.combo > 0 ? this.comboTimer / 2.5 : 0 }, dt);
       const lead = this.computeLead(this.targetList);
       this.hud.updateOverlay(this.camera, p, this.targetList, lead.point, lead.locked, this.portal.active ? this.portal.pos : null);
     }
@@ -626,7 +633,8 @@ export class Game {
   smokeTrail(ac, dt) {
     // Wingtip vapor: strongest while pulling hard, a faint thread while boosting.
     const g = Math.abs(ac.pitchVel) / ac.stats.pitchRate + Math.abs(ac.rollVel) / ac.stats.rollRate * 0.5;
-    const intensity = Math.max(clamp((g - 0.45) / 0.45, 0, 1), ac.input.throttle > 0 ? 0.3 : 0);
+    let intensity = Math.max(clamp((g - 0.45) / 0.45, 0, 1), ac.input.throttle > 0 ? 0.3 : 0);
+    if (ac.barrel) intensity = 1;   // the ace's corkscrew draws itself in vapour
     tv.copy(ac.pos).addScaledVector(ac.right, 7.9).addScaledVector(ac.forward, -0.9);
     this.trails.push(ac.trails[0], dt, tv, ac.up, intensity);
     tv.copy(ac.pos).addScaledVector(ac.right, -7.9).addScaledVector(ac.forward, -0.9);

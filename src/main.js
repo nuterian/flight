@@ -147,6 +147,25 @@ async function boot() {
     $('gohint').textContent = 'TAP TO FLY AGAIN';
   }
 
+  // Title tips: one short line at a time, the things the game never says in the HUD.
+  const TIPS = [
+    'Bandits break off after a pass. Get on their tail while they cruise.',
+    'An interceptor dives from above and turns badly. Turn inside it.',
+    'The ace in black barrel-rolls when you sit behind it. Wait it out.',
+    'The airship shrugs off hits. Come from below and hit the gondola.',
+    'Shoot the airship\'s turrets off first.',
+    'Every wave\'s portal opens over a new part of the isles. Follow the teal diamond.',
+    'A lighthouse, a wreck and a ring of stones are out there. Find them.',
+    'Boost to catch a bandit, brake to turn inside one.',
+    'Above the clouds your wingtips draw contrails.',
+    'Clear a wave untouched for a bonus.',
+  ];
+  const tipEl = $('tip');
+  let tipIndex = Math.floor(Math.random() * TIPS.length);
+  const showTip = () => { tipEl.textContent = TIPS[tipIndex]; tipIndex = (tipIndex + 1) % TIPS.length; };
+  showTip();
+  setInterval(() => { if (game.state !== 'title') return; tipEl.classList.add('fade'); setTimeout(() => { showTip(); tipEl.classList.remove('fade'); }, 450); }, 7000);
+
   // Help dialog: opens from the ? button, closes on its button, Escape or Enter, and never starts the game by accident.
   const help = $('help');
   const showHelp = (on) => help.classList.toggle('hidden', !on);
