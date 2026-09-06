@@ -87,9 +87,10 @@ note is generated in code.
   kicks with the guns, a slow-motion orbit on the last kill of a wave, wreckage that tumbles and smokes, damage
   states, sea spray and dust on low passes, birds, gulls, sheep, wolves, villagers, and a title built from riveted
   steel blocks.
-- **Sound.** Procedural Web Audio: engine pitched to speed, wind, guns, hits, explosions with sub-bass, and two
-  title themes ("Dogfight" and "Coral Isles") played live by a sequencer on modelled instruments, including a
-  Karplus-Strong string in an AudioWorklet.
+- **Sound.** Procedural Web Audio: engine pitched to speed, wind, guns, hits, bullets cracking past, an
+  interceptor's dive siren, the airship's engines as you close in, a heartbeat at low hull, explosions with
+  sub-bass, and two themes ("Dogfight" and "Coral Isles") played live by a sequencer on modelled instruments,
+  including a Karplus-Strong string in an AudioWorklet, full on the title and ducked under the engine in play.
 
 ## Layout
 

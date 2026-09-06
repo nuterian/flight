@@ -11,8 +11,8 @@ export class Hud {
     this.el = {
       hud: $('hud'), score: $('score'), wave: $('wave'), enemies: $('enemies'), health: $('health'), speed: $('speed'),
       crosshair: $('crosshair'), lead: $('leadret'), markers: $('markers'), banner: $('banner'), warning: $('warning'),
-      vignette: $('vignette'), title: $('title'), gameover: $('gameover'), best: $('best'), newbest: $('newbest'), touch: $('touch'),
-      portal: $('portalmark'), popups: $('popups'), hitarc: $('hitarc'), dbmode: $('dbmode'), dbscore: document.querySelector('#gameover .scoreline'), dbtiles: $('dbtiles'), dblog: $('dblog'), dbmedal: $('dbmedal'), share: $('btn-share'), gohint: $('gohint'), medals: $('medals'), dailyinfo: $('dailyinfo'),
+      vignette: $('vignette'), title: $('title'), gameover: $('gameover'), best: $('best'), bestwave: $('bestwave'), newbest: $('newbest'), touch: $('touch'),
+      portal: $('portalmark'), popups: $('popups'), hitarc: $('hitarc'), landmarks: $('landmarks'), dbmode: $('dbmode'), dbscore: document.querySelector('#gameover .scoreline'), dbtiles: $('dbtiles'), dblog: $('dblog'), dbmedal: $('dbmedal'), share: $('btn-share'), gohint: $('gohint'), medals: $('medals'), dailyinfo: $('dailyinfo'),
       healthwrap: $('healthwrap'), killfeed: $('killfeed'), combo: $('combo'), mute: $('mute'), pips: $('pips'), speedbar: $('speedbar'), btnMute: $('btn-mute'),
     };
     this.pipCount = 0;
@@ -20,6 +20,7 @@ export class Hud {
     this.cache = {};
     this.markerPool = [];
     this.popupPool = []; this.popupsLive = [];
+    this.lmarkPool = [];
     this.bannerTimer = null;
     this.flash = 0;
     this.hitFrames = 0;
@@ -136,7 +137,7 @@ export class Hud {
   }
 
   /** Project world positions into HUD elements. `portal` is the open portal's position, or null. */
-  updateOverlay(camera, player, enemies, leadPoint, locked, portal = null) {
+  updateOverlay(camera, player, enemies, leadPoint, locked, portal = null, landmarks = null) {
     const W = innerWidth, H = innerHeight;
     const place = (el, p) => {
       v.copy(p).project(camera);
@@ -190,6 +191,19 @@ export class Hud {
       if (it.t > 1.3 || v.z > 1 || Math.abs(v.x) > 1.1 || Math.abs(v.y) > 1.1) { it.el.style.display = 'none'; this.popupPool.push(it.el); this.popupsLive.splice(i, 1); continue; }
       it.el.style.left = `${(v.x + 1) * 0.5 * W}px`; it.el.style.top = `${(1 - v.y) * 0.5 * H}px`;
     }
+    // unfound landmarks within 520 units glimmer on screen; off screen they stay quiet, they are for finding
+    let ln = 0;
+    if (landmarks) for (const l of landmarks) {
+      if (l.found || l.pos.distanceToSquared(player.pos) > 520 * 520) continue;
+      let el = this.lmarkPool[ln];
+      if (!el) { el = document.createElement('div'); el.className = 'lmark'; this.el.landmarks.appendChild(el); this.lmarkPool.push(el); }
+      ln++;
+      v.copy(l.pos).project(camera);
+      if (v.z > 1 || Math.abs(v.x) > 0.97 || Math.abs(v.y) > 0.97) { el.style.display = 'none'; continue; }
+      el.style.display = 'block';
+      el.style.left = `${(v.x + 1) * 0.5 * W}px`; el.style.top = `${(1 - v.y) * 0.5 * H}px`;
+    }
+    for (let i = ln; i < this.lmarkPool.length; i++) this.lmarkPool[i].style.display = 'none';
     const pm = this.el.portal;
     if (!portal) { pm.style.display = 'none'; return; }
     v.copy(portal).project(camera);

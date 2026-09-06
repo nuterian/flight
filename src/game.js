@@ -66,7 +66,9 @@ export class Game {
     this.camKick = 0;
     this.fov = 62;
     this.best = Number(store.get('skyfight.best') || 0);
+    this.bestWave = Number(store.get('skyfight.bestwave') || 0);
     this.hud.text('best', String(this.best));
+    this.hud.text('bestwave', this.bestWave ? ` · wave ${this.bestWave}` : '');
     this.hud.medals(this.medals);
     this.hud.daily(todayLabel(), loadDailyBest());
     this.resetRun();
@@ -620,13 +622,14 @@ export class Game {
     this.updateCamera(dt);
     const alive = this.player.alive && this.state === 'playing';
     this.audio.setFlight(alive ? this.player.speed : 0, alive ? this.player.input.throttle : 0, alive && this.outside, dt, alive ? this.player.health / this.player.maxHealth : 1);
-    if (this.world.nearestFall) this.audio.setAmbience(clamp(1 - this.world.nearestFall(this.camera.position) / 380, 0, 1));
+    if (this.world.nearestFall) this.audio.setAmbience(clamp(1 - this.world.nearestFall(this.camera.position) / 380, 0, 1), this.airship.alive ? clamp(1 - this.airship.pos.distanceTo(this.camera.position) / 420, 0, 1) : 0);
     if (this.state === 'playing') {
       const p = this.player;
       const enemiesAlive = this.aliveEnemies();
       this.hud.updateStats({ score: this.score, wave: this.wave, enemies: (this.aliveCount || 0) + this.pending, total: this.waveSize || 0, health: p.health, maxHealth: p.maxHealth, speed: p.speed, maxSpeed: PLAYER_STATS.maxSpeed * 1.2, boost: p.input.throttle > 0, firing: this.input.fire, combo: this.combo > 0 ? this.comboTimer / 2.5 : 0 }, dt);
       const lead = this.computeLead(this.targetList);
-      this.hud.updateOverlay(this.camera, p, this.targetList, lead.point, lead.locked, this.portal.active ? this.portal.pos : null);
+      if (this.world.landmarks) for (const l of this.world.landmarks.list) l.found = this.found.has(l.id);
+      this.hud.updateOverlay(this.camera, p, this.targetList, lead.point, lead.locked, this.portal.active ? this.portal.pos : null, this.world.landmarks ? this.world.landmarks.list : null);
     }
   }
 
@@ -698,6 +701,7 @@ export class Game {
     this.bestStreak = Math.max(this.bestStreak, this.streak);
     let isBest = this.score > this.best;
     if (isBest) { this.best = this.score; store.set('skyfight.best', String(this.best)); this.hud.text('best', String(this.best)); }
+    if (this.wave > this.bestWave) { this.bestWave = this.wave; store.set('skyfight.bestwave', String(this.wave)); this.hud.text('bestwave', ` · wave ${this.wave}`); }
     let share = null;
     if (this.daily) {
       const key = todayKey(), prev = loadDailyBest(key);

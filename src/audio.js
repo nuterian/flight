@@ -56,6 +56,14 @@ export class Sound {
     w.src.connect(w.bp); w.bp.connect(w.gain); w.gain.connect(this.bus);
     w.src.start();
 
+    // the airship: a slow double throb of engines you hear as you close in
+    const s = this.ship = { a: ctx.createOscillator(), b: ctx.createOscillator(), lp: ctx.createBiquadFilter(), gain: ctx.createGain() };
+    s.a.type = 'sawtooth'; s.b.type = 'sawtooth'; s.a.frequency.value = 38; s.b.frequency.value = 38.7;
+    s.lp.type = 'lowpass'; s.lp.frequency.value = 160; s.lp.Q.value = 1.8;
+    s.gain.gain.value = 0;
+    s.a.connect(s.lp); s.b.connect(s.lp); s.lp.connect(s.gain); s.gain.connect(this.bus);
+    s.a.start(); s.b.start();
+
     // waterfall: a low rumble you only hear near the big drops
     const f = this.fall = { src: ctx.createBufferSource(), lp: ctx.createBiquadFilter(), gain: ctx.createGain() };
     f.src.buffer = buf; f.src.loop = true; f.src.loopStart = 0.7;
@@ -65,10 +73,11 @@ export class Sound {
     f.src.start();
   }
 
-  /** Ambient layers: `fall` is 0..1 closeness to the nearest big waterfall. */
-  setAmbience(fall) {
+  /** Ambient layers: `fall` is 0..1 closeness to the nearest big waterfall, `ship` 0..1 closeness to the airship. */
+  setAmbience(fall, ship = 0) {
     if (!this.ctx) return;
     this.fall.gain.gain.setTargetAtTime(fall * fall * 0.5, this.ctx.currentTime, 0.25);
+    this.ship.gain.gain.setTargetAtTime(ship * ship * 0.32, this.ctx.currentTime, 0.3);
   }
 
   toggleMute() {
