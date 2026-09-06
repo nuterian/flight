@@ -35,6 +35,13 @@ help (targets are a little fatter and bullets bend toward a bandit near their li
 eases the nose up if your path is about to meet the ground. All of it fades out by wave 7. The curve is tuned with
 scripted pilots in `__aiProfile` (a rookie and an average one), not by feel.
 
+Three kinds of bandit, told apart from behind by their tails: the **hound** (one fin, any colour) chases; the
+**interceptor** (a tall fin with a ventral fin under it, navy and orange, from wave 3) is fast, turns badly, climbs
+to a perch above you and dives through in a slashing pass; the **ace** (twin fins, black with red and gold, rare from
+wave 6) barrel-rolls when you get on its tail and comes straight back for a second pass. Every fifth wave an
+**airship** drifts in: a long two-tone envelope with two turrets that each cover one side of it. The envelope
+shrugs bullets off; hit the gondola underneath, from below or the side, and the wave ends when it falls.
+
 Bandits arrive through a portal each wave and come in bigger packs. They hunt in passes: after a pass, or after
 sitting on your tail for a few seconds, a bandit breaks off and cruises about before coming back, and only part of
 the pack hunts you at once, so there is always one showing you its tail. Quick kills chain into combos. Stay inside
@@ -85,7 +92,8 @@ note is generated in code.
 | `src/terrain.js` | pure-JS geology: heightfield, lakes, rivers, terraces, ground queries |
 | `src/world.js` | terrain mesh, sea, sky, clouds, props, wildlife, villages, lighting |
 | `src/boxes.js`, `src/plane.js` | the instanced box batches and the plane as data |
-| `src/aircraft.js`, `src/ai.js`, `src/bullets.js` | flight model, bandit brains, tracers |
+| `src/aircraft.js`, `src/ai.js`, `src/bullets.js` | flight model, bandit brains, tracers with aim assist |
+| `src/airship.js` | the fifth-wave airship: envelope, turrets, gondola, the fall |
 | `src/game.js`, `src/portal.js` | waves, scoring, damage, camera, the arrival portal |
 | `src/daily.js`, `src/medals.js` | the seeded daily flight and the share line, the medal list and its storage |
 | `src/effects.js`, `src/trails.js` | particles, wreckage, vapor ribbons and wakes |

@@ -1,7 +1,8 @@
 import * as THREE from 'three/webgpu';
 import { local, softParam } from './boxes.js';
 
-// Bold toy-plane liveries.
+// Bold toy-plane liveries. Hounds come in every colour; interceptors are navy with orange or gold; the ace is
+// black with red and gold.
 export const SCHEMES = {
   player: { body: 0xff4a36, accent: 0xfff3d6, trim: 0x22304a },
   enemies: [
@@ -12,7 +13,25 @@ export const SCHEMES = {
     { body: 0xb45cff, accent: 0xfff3d6, trim: 0x4a2a7a },
     { body: 0x2a2f4a, accent: 0xa4f542, trim: 0x15182b },
   ],
+  interceptors: [{ body: 0x1d2a44, accent: 0xff8a2a, trim: 0xe8eef7 }, { body: 0x2b3a55, accent: 0xffd233, trim: 0xdfe6f0 }],
+  ace: { body: 0x111318, accent: 0xff2e2e, trim: 0xffc233 },
 };
+// Silhouettes you can tell apart from behind. `fixed` overrides boxes of FIXED by index; `extras` fill the spare
+// slots every plane carries. The hound is the plain plane: one fin. The interceptor: a long nose, a narrow wing, a
+// tall fin with a ventral fin under it (a cross). The ace: twin fins either side of the tail (an H) and a stripe
+// across each wing.
+export const VARIANTS = {
+  hound: { fixed: {}, extras: [] },
+  interceptor: {
+    fixed: { 3: [2.0, 1.9, 2.8, 0, 0, -4.5, 'accent'], 7: [11.5, 0.45, 2.3, 0, -0.3, -0.5, 'body'], 9: [0.5, 3.3, 1.5, 0, 2.35, 4.6, 'accent'] },
+    extras: [[0.4, 1.8, 1.4, 0, -1.2, 4.6, 'accent']],
+  },
+  ace: {
+    fixed: { 9: [0.4, 1.4, 1.4, 0, 1.4, 4.6, 'accent'] },
+    extras: [[0.4, 2.4, 1.5, -2.6, 1.7, 4.6, 'accent'], [0.4, 2.4, 1.5, 2.6, 1.7, 4.6, 'accent'], [1.2, 0.56, 3.25, -3.2, -0.3, -0.7, 'trim'], [1.2, 0.56, 3.25, 3.2, -0.3, -0.7, 'trim']],
+  },
+};
+const EXTRA_SLOTS = 4;
 const GLASS = 0xbfe9ff, SKIN = 0xf0c8a0, GOGGLES = 0x222a3a, HELMET = 0x6b4a2e, SCORCH = 0x2a2622;
 export const GUNS = [new THREE.Vector3(3.4, -0.3, -2.4), new THREE.Vector3(-3.4, -0.3, -2.4)];
 
@@ -50,11 +69,12 @@ const HINGE_LOCALS = HINGES.map((h) => h.boxes.map((b) => local(b[3], b[4], b[5]
 const PILOT_LOCALS = PILOT.map((b) => local(b[3], b[4], b[5], b[0], b[1], b[2]));
 const HINGE_OFFSET = []; { let o = FIXED.length + PROP.length; for (const h of HINGES) { HINGE_OFFSET.push(o); o += h.boxes.length; } }
 const PILOT_OFFSET = FIXED.length + PROP.length + HINGES.reduce((n, h) => n + h.boxes.length, 0);
+const EXTRA_OFFSET = PILOT_OFFSET + PILOT.length;
 const PROP_PIVOT = new THREE.Vector3(0, 0, -4.95);
 const DISC_LOCAL = local(0, 0, -4.95, 5.4, 5.4, 0.06);          // prop blur disc lies in the prop's xy plane
 const FLAME = [[-1.45, -0.55, -1.2], [1.45, -0.55, -1.2]];       // exhaust flames trail back from the stubs
 const FIRE = [0, 1.15, -3.1];                                    // damage fire licks up from the cowl
-export const PLANE_SLOTS = PILOT_OFFSET + PILOT.length;
+export const PLANE_SLOTS = EXTRA_OFFSET + EXTRA_SLOTS;
 
 const hinge = new THREE.Matrix4(), world2 = new THREE.Matrix4(), q = new THREE.Quaternion(), q2 = new THREE.Quaternion(), v = new THREE.Vector3(), ONE = new THREE.Vector3(1, 1, 1), fs = new THREE.Vector3();
 const AXIS = { x: new THREE.Vector3(1, 0, 0), y: new THREE.Vector3(0, 1, 0), z: new THREE.Vector3(0, 0, 1) };
@@ -62,9 +82,10 @@ const IDENT = new THREE.Quaternion(), eul = new THREE.Euler(), tmpC = new THREE.
 
 /** A plane is a run of boxes in the shared batch; placing it is a matrix multiply per box. */
 export class Plane {
-  constructor({ lit, glow, soft }, scheme) {
+  constructor({ lit, glow, soft }, scheme, variant = 'hound') {
     this.boxes = lit; this.glow = glow; this.soft = soft; this.scheme = scheme;
     this.base = lit.alloc(PLANE_SLOTS);
+    this.fixed = FIXED; this.fixedLocals = FIXED_LOCALS; this.extras = []; this.extraLocals = [];
     // prop: spin. aileron/elevator/rudder: deflection. flex: wingtip bend. gear: fold angle (0 down). disc: blur alpha.
     // flame: 0..1 boost. fire: 0..1 damage fire. headYaw/headPitch/headRoll: where the pilot is looking.
     this.angles = { prop: 0, aileron: 0, elevator: 0, rudder: 0, flex: 0, gear: 0, disc: 0, flame: 0, fire: 0, headYaw: 0, headPitch: 0, headRoll: 0 };
@@ -81,12 +102,31 @@ export class Plane {
       for (let k = 0; k < 2; k++) { glow.color(this.flames + k, 0xff9a3c); glow.scalar(this.flames + k, 2.2); }
       glow.color(this.flames + 2, 0xff6a2a); glow.scalar(this.flames + 2, 2.4);
     }
+    this.setVariant(variant, scheme);
+  }
+
+  /** Reshapes and repaints the plane: a silhouette from VARIANTS and a livery. Used when a bandit is re-issued. */
+  setVariant(variant, scheme) {
+    const v = VARIANTS[variant] || VARIANTS.hound, b = this.boxes;
+    this.variant = variant; this.scheme = scheme;
+    this.fixed = FIXED.map((f, k) => v.fixed[k] || f);
+    this.fixedLocals = this.fixed.map((f, k) => v.fixed[k] ? local(f[3], f[4], f[5], f[0], f[1], f[2]) : FIXED_LOCALS[k]);
+    this.extras = v.extras;
+    this.extraLocals = v.extras.map((e) => local(e[3], e[4], e[5], e[0], e[1], e[2]));
+    let i = this.base;
+    for (const f of this.fixed) { b.color(i, typeof f[6] === 'string' ? scheme[f[6]] : f[6]); b.scalar(i, f[7] ?? 0.6); i++; }
+    for (let k = 0; k < PROP.length; k++) { b.color(i, scheme.trim); b.scalar(i, 0.6); i++; }
+    for (const h of HINGES) for (const bx of h.boxes) { b.color(i, scheme[bx[6]]); b.scalar(i, 0.6); i++; }
+    for (const p of PILOT) { b.color(i, typeof p[6] === 'string' ? scheme[p[6]] : p[6]); b.scalar(i, 0.7); i++; }
+    this.extras.forEach((e, k) => { b.color(this.base + EXTRA_OFFSET + k, scheme[e[6]]); b.scalar(this.base + EXTRA_OFFSET + k, 0.6); });
+    b.hide(this.base + EXTRA_OFFSET + this.extras.length, EXTRA_SLOTS - this.extras.length);
+    if (this.soft) this.soft.color(this.disc, scheme.trim);
   }
 
   /** Battle damage on the paint: 0 = factory fresh, 1 = charred. Also crazes the windscreen past half. */
   scorch(t) {
     const b = this.boxes;
-    FIXED.forEach((f, k) => {
+    this.fixed.forEach((f, k) => {
       if (typeof f[6] === 'string') b.color(this.base + k, tmpC.set(this.scheme[f[6]]).lerp(scorchC, t * 0.65));
       else b.color(this.base + k, tmpC.set(f[6]).lerp(crazeC, t > 0.5 ? 0.8 : 0));
     });
@@ -94,7 +134,8 @@ export class Plane {
 
   place(world) {
     const b = this.boxes, a = this.angles;
-    b.place(this.base, FIXED_LOCALS, world);
+    b.place(this.base, this.fixedLocals, world);
+    if (this.extras.length) b.place(this.base + EXTRA_OFFSET, this.extraLocals, world);
     hinge.compose(PROP_PIVOT, q.setFromAxisAngle(AXIS.z, a.prop), ONE);
     b.place(this.base + FIXED.length, PROP_LOCALS, world2.multiplyMatrices(world, hinge));
     for (let k = 0; k < HINGES.length; k++) {

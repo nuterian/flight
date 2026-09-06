@@ -86,9 +86,11 @@ export function attachDevHooks({ game, input, world, camera, pipeline, renderer,
   /** Two scripted pilots. `average` reacts every 0.3 s, fires inside a 4 degree cone. `rookie` is a first-timer: slow to
    *  react, half the agility, fires at anything inside 7 degrees and aims with a wobble of up to 20 units. */
   const PILOTS = {
-    average: { react: 0.3, agility: 0.7, cone: 0.07, noise: 0 },
-    rookie: { react: 0.55, agility: 0.5, cone: 0.12, noise: 20 },
+    average: { react: 0.3, agility: 0.7, cone: 0.07, noise: 0, evade: 0 },
+    rookie: { react: 0.55, agility: 0.5, cone: 0.12, noise: 20, evade: 0 },
+    good: { react: 0.15, agility: 1.0, cone: 0.05, noise: 0, evade: 1 },   // and breaks hard when a bandit lines up behind
   };
+  let pEvade = 0;
   let PILOT = PILOTS.average;
   let pTarget = null, pThink = 0;
   const pNoise = new THREE.Vector3();
@@ -102,17 +104,29 @@ export function attachDevHooks({ game, input, world, camera, pipeline, renderer,
       pNoise.set(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).multiplyScalar(2 * PILOT.noise);
       let best = Infinity;
       for (const e of game.enemies) { if (!e.ac.alive) continue; const d = e.ac.pos.distanceToSquared(p.pos); if (d < best) { best = d; pTarget = e.ac; } }
+      if (game.airship.alive && game.airship.falling === 0) { const g = game.airship.gondola, d = g.pos.distanceToSquared(p.pos); if (d < best * 1.5) pTarget = g; }
+      // the good pilot notices a bandit lined up behind and breaks
+      if (PILOT.evade && pEvade <= 0) for (const e of game.enemies) {
+        if (!e.ac.alive) continue;
+        const l = p.toLocal(e.ac.pos, ptv);
+        if (l.z < 0 && l.length() < 220 && e.ac.forward.dot(pdir.copy(p.pos).sub(e.ac.pos).normalize()) > 0.9 && Math.random() < 0.6) { pEvade = 1.1; break; }
+      }
     }
     let pitch = 0.03, roll = 0, yaw = 0, throttle = 0, fire = false;
+    pEvade -= dt;
     ptv.copy(p.pos).addScaledVector(p.forward, 80);
     const edge = Math.max(Math.abs(p.pos.x), Math.abs(p.pos.z));
     if (p.pos.y - groundAt(p.pos.x, p.pos.z) < 35 || ptv.y - groundAt(ptv.x, ptv.z) < 25) {
       pitch = 1; roll = clampN(p.right.y * 3, -1, 1); throttle = 1;
     } else if (edge > BOUNDS.half - 150 || p.pos.y > BOUNDS.ceiling - 60) {
       pilotBrain.steerTo(paim.set(0, 220, 0), 0.7); pitch = inp.pitch; roll = inp.roll; yaw = inp.yaw;
+    } else if (pEvade > 0) {   // a climbing break: bank hard for a third of a second, then pull
+      roll = pEvade > 0.75 ? 1 : 0; pitch = 0.9; throttle = 1;
     } else if (pTarget) {
       const dist = p.pos.distanceTo(pTarget.pos);
       paim.copy(pTarget.pos).addScaledVector(pTarget.velocity, dist / BULLET_SPEED).add(pNoise);
+      // the airship's gondola hides under the envelope: get below it first, the way a player learns to
+      if (pTarget.ship && p.pos.y > pTarget.pos.y - 15 && dist > 60) paim.y -= 70;
       pilotBrain.steerTo(paim, PILOT.agility);
       pitch = inp.pitch; roll = inp.roll; yaw = inp.yaw;
       const l = p.toLocal(paim, ptv), off = Math.atan2(Math.hypot(l.x, l.y), l.z);
@@ -123,7 +137,7 @@ export function attachDevHooks({ game, input, world, camera, pipeline, renderer,
   };
   window.__flyAverage = flyAverage;   // for staging: `__flyAverage(1/120); __game.update(1/120)` per step
   const profileOnce = (wave, seconds, s, pilot) => {
-    seed = s; Math.random = seeded; PILOT = PILOTS[pilot] || PILOTS.average;
+    seed = s; Math.random = seeded; PILOT = PILOTS[pilot] || PILOTS.average; pEvade = 0;
     game.medals = new Medals(false);
     const origDamage = Aircraft.prototype.damage, origFire = game.fire;
     const n = { pShots: 0, eShots: 0, pHits: 0, eHits: 0, taken: 0 };
@@ -162,13 +176,14 @@ export function attachDevHooks({ game, input, world, camera, pipeline, renderer,
     }
     if (freeRun > 0) windows.push(freeRun);
     Aircraft.prototype.damage = origDamage; game.fire = origFire;
-    const kills = game.kills, health = game.player.health, died = game.state !== 'playing', reached = game.wave, cause = died ? game.deathCause : null, cushionT = game.cushioned;
+    const kills = game.kills, health = game.player.health, died = game.state !== 'playing', reached = game.wave, cause = died ? game.deathCause : null, cushionT = game.cushioned, turretDmg = game.turretDamage;
+    const shipHp = game.airship.alive ? Math.round(game.airship.hp) : null;
     game.abort();
     Math.random = realRandom; game.medals = realMedals;
     const f = (x) => +x.toFixed(3);
     const stateFrac = {}; for (const k in states) stateFrac[k] = f(states[k] / (banditT || 1));
     return {
-      wave, waveReached: reached, seconds: f(t), died, cause, cushioned: f(cushionT), cleared: cleared < 0 ? null : f(cleared), kills, healthLeft: Math.round(health), damageTaken: Math.round(n.taken),
+      wave, waveReached: reached, seconds: f(t), died, cause, cushioned: f(cushionT), turretDamage: Math.round(turretDmg), airshipHp: shipHp, cleared: cleared < 0 ? null : f(cleared), kills, healthLeft: Math.round(health), damageTaken: Math.round(n.taken),
       shots: n.pShots, hits: n.pHits, accuracy: f(n.pHits / (n.pShots || 1)), banditShots: n.eShots, banditHits: n.eHits,
       // fractions of the time at least one bandit was alive
       huntedFrac: f(huntedT / (aliveT || 1)),   // a pursuing bandit had its nose on you within 500

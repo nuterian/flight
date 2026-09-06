@@ -58,6 +58,8 @@ export class Hud {
   }
 
   combo(n) { const c = this.el.combo; c.textContent = `x${n} COMBO`; c.classList.add('show'); restart(c, 'pop'); }
+  /** A bullet just missed: the crosshair flicks. */
+  whiz() { restart(this.el.crosshair, 'whiz'); }
   comboOff() { this.el.combo.classList.remove('show'); }
   bump(key) { restart(this.el[key], 'bump'); }
   showMute(on) { this.el.mute.classList.toggle('hidden', !on); this.el.btnMute.classList.toggle('muted', on); }
@@ -131,7 +133,7 @@ export class Hud {
 
     let n = 0;
     for (const e of enemies) {
-      if (!e.alive) continue;
+      if (!e.alive || e.absorb) continue;
       let m = this.markerPool[n];
       if (!m) {
         m = document.createElement('div'); m.className = 'marker';

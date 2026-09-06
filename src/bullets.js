@@ -21,6 +21,7 @@ export class BulletPool {
     this.ttl = new Float32Array(max);
     this.owner = new Array(max).fill(null);
     this.damage = new Float32Array(max);
+    this.passed = new Uint8Array(max);        // set by the game once a bullet has whistled past the player
     this.active = new Set();
     this.free = [];
     for (let i = max - 1; i >= 0; i--) this.free.push(i);
@@ -31,7 +32,7 @@ export class BulletPool {
     const i = this.free.pop();
     this.pos.set([pos.x, pos.y, pos.z], i * 3);
     this.vel.set([vel.x, vel.y, vel.z], i * 3);
-    this.ttl[i] = ttl; this.owner[i] = owner; this.damage[i] = damage;
+    this.ttl[i] = ttl; this.owner[i] = owner; this.damage[i] = damage; this.passed[i] = 0;
     this.active.add(i);
   }
 
@@ -65,7 +66,7 @@ export class BulletPool {
         tmpT.set(ox, oy, oz);
         let bestCos = Math.cos(assist.cone), found = false;
         for (const t of targets) {
-          if (!t.alive || t.team === owner.team) continue;
+          if (!t.alive || t.team === owner.team || t.absorb) continue;   // armour is never worth bending toward
           const d2 = t.pos.distanceToSquared(tmpT);
           if (d2 > range2) continue;
           aimDir.copy(t.pos).addScaledVector(t.velocity, Math.sqrt(d2) / speed).sub(tmpT).normalize();
@@ -96,7 +97,7 @@ export class BulletPool {
           toC.copy(t.pos).sub(tmpT.set(ox, oy, oz));
           const u = THREE.MathUtils.clamp(toC.dot(seg) / segLen2, 0, 1);
           closest.set(ox, oy, oz).addScaledVector(seg, u);
-          const r = t.stats.radius + (assist ? assist.radius : 0);
+          const r = t.stats.radius + (assist && !t.absorb ? assist.radius : 0);
           if (closest.distanceToSquared(t.pos) < r * r) {
             onHit(t, closest, this.damage[i], owner);
             dead = true;

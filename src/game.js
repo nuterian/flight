@@ -1,6 +1,7 @@
 import * as THREE from 'three/webgpu';
 import { Aircraft, PLAYER_STATS, ENEMY_STATS } from './aircraft.js';
 import { Plane, SCHEMES } from './plane.js';
+import { Airship } from './airship.js';
 import { EnemyBrain } from './ai.js';
 import { BulletPool, BULLET_SPEED } from './bullets.js';
 import { Effects } from './effects.js';
@@ -18,6 +19,9 @@ const WORLD_UP = new THREE.Vector3(0, 1, 0), NEG_Z = new THREE.Vector3(0, 0, -1)
 const rnd = (a, b) => a + Math.random() * (b - a);
 const MAX_ENEMIES = 9;
 const TWO_PI = Math.PI * 2;
+const TYPE_LABEL = { hound: 'BANDIT DOWN', interceptor: 'INTERCEPTOR DOWN', ace: 'ACE DOWN' };
+const TYPE_SCORE = { hound: 100, interceptor: 140, ace: 300 };
+const BOSS_EVERY = 5;
 
 export class Game {
   constructor(scene, camera, input, hud, world, batches) {
@@ -28,6 +32,7 @@ export class Game {
     this.effects = new Effects(lit, glow, batches.soft);
     this.audio = new Sound();
     this.portal = new Portal(lit, glow);
+    this.targetList = [];   // everything the player's guns and HUD can see this step: bandits and the airship's hulls
     this.hitStop = 0; this.outside = false;
     this.killCam = 0; this.killPoint = new THREE.Vector3(); this.killAngle = 0; this.snapCam = false;
     this.skimTimer = 0; this.wasFast = false;
@@ -42,6 +47,7 @@ export class Game {
     this.player = new Aircraft(new Plane(batches, SCHEMES.player), PLAYER_STATS, 0);
     this.player.trails = [this.trails.ribbon(), this.trails.ribbon()];
 
+    this.airship = new Airship(lit, glow, this.effects);
     this.enemies = [];
     for (let i = 0; i < MAX_ENEMIES; i++) {
       const ac = new Aircraft(new Plane(batches, SCHEMES.enemies[i % SCHEMES.enemies.length]), { ...ENEMY_STATS }, 1);
@@ -72,8 +78,9 @@ export class Game {
     // the debrief's numbers and the medal checks
     this.shots = 0; this.hits = 0; this.bestCombo = 0; this.streak = 0; this.bestStreak = 0; this.aloft = 0;
     this.waveShots = 0; this.waveHits = 0; this.loopAcc = 0; this.loopT = 0; this.loopUp = false; this.loopDown = false;
-    this.runMedals = []; this.newMedals = []; this.log = []; this.cushioned = 0;
+    this.runMedals = []; this.newMedals = []; this.log = []; this.cushioned = 0; this.turretDamage = 0;
     if (this.portal) this.portal.hide();
+    if (this.airship) this.airship.hide();
     if (this.hud) this.hud.resetScore();
     if (this.world) this.world.setDanger(0);
     this.playerBullets.clear(); this.enemyBullets.clear(); this.effects.clear();
@@ -119,7 +126,17 @@ export class Game {
       if (this.wave > 1 && this.rng() < 0.35) count = Math.min(MAX_ENEMIES, count + 1);
       skill = Math.min(1, skill + (this.rng() - 0.5) * 0.08);
     }
-    this.waveSize = count;
+    const boss = this.wave % BOSS_EVERY === 0;
+    if (boss) count = 2;   // the airship and a pair of escorts
+    // Who comes: hounds on the first waves, interceptors join at wave 3 (about half the pack), and from wave 6 an
+    // ace turns up on some waves, never more than one.
+    const types = [];
+    for (let i = 0; i < count; i++) {
+      if (!boss && this.wave >= 6 && i === count - 1 && (this.wave % 2 === 0 || this.rng() < 0.5)) types.push('ace');
+      else if (!boss && this.wave >= 3 && i % 2 === 1) types.push('interceptor');
+      else types.push('hound');
+    }
+    this.waveSize = count + (boss ? 1 : 0);
     this.waveShots = 0; this.waveHits = 0;
     this.note('wave', this.wave);
     // The learning curve: the first waves are target practice. Bandits are light and slow, do not shoot back on
@@ -146,13 +163,60 @@ export class Game {
     for (const e of this.enemies) { e.pending = 0; e.far = 0; }
     for (let i = 0; i < count; i++) {
       const e = this.enemies[i];
-      const ac = e.ac;
-      ac.maxHealth = 24 + this.wave * 6; ac.health = ac.maxHealth;   // 3 hits on wave 1, 6 by wave 6, 8 by wave 10
+      const ac = e.ac, type = types[i];
+      e.type = type;
+      const hp = 24 + this.wave * 6;   // 3 hits on wave 1, 6 by wave 6, 8 by wave 10
+      ac.maxHealth = Math.round(type === 'ace' ? hp * 1.6 : type === 'interceptor' ? hp * 0.85 : hp); ac.health = ac.maxHealth;
       ac.stats.maxSpeed = ENEMY_STATS.maxSpeed - 12 + this.wave * 3;
       ac.stats.cruise = ENEMY_STATS.cruise - 8 + this.wave * 2;
-      e.brain = new EnemyBrain(ac, skill);
+      ac.stats.pitchRate = ENEMY_STATS.pitchRate; ac.stats.rollRate = ENEMY_STATS.rollRate; ac.stats.bankTurn = ENEMY_STATS.bankTurn;
+      let scheme = SCHEMES.enemies[i % SCHEMES.enemies.length], sk = skill;
+      if (type === 'interceptor') {   // fast and straight: more speed, much less turn
+        ac.stats.maxSpeed += 22; ac.stats.cruise += 10; ac.stats.pitchRate *= 0.72; ac.stats.rollRate *= 0.8; ac.stats.bankTurn *= 0.85;
+        scheme = SCHEMES.interceptors[i % SCHEMES.interceptors.length];
+      } else if (type === 'ace') {    // the best pilot in the sky, in black
+        ac.stats.maxSpeed += 10; ac.stats.pitchRate *= 1.15; ac.stats.rollRate *= 1.2; sk = Math.min(1, skill + 0.25);
+        scheme = SCHEMES.ace;
+      }
+      ac.plane.setVariant(type, scheme);
+      e.brain = new EnemyBrain(ac, sk, type);
       e.pending = 1.2 + i * 0.3;
     }
+    if (boss) {
+      // the airship drifts in from far out on the portal's side, straight at you, slow enough to catch
+      const from = tv2.set(tv.x, 0, tv.z).sub(this.player.pos).setY(0).normalize().multiplyScalar(1000).add(this.player.pos);
+      const lim = BOUNDS.half - 400;
+      from.x = clamp(from.x, -lim, lim); from.z = clamp(from.z, -lim, lim);
+      this.airship.spawn(from, this.player.pos, clamp(this.player.pos.y + 60, 220, 360), 140 + this.wave * 12);   // 18 gondola hits on wave 5, 24 on wave 10
+      this.hud.kill('AIRSHIP · HIT THE GONDOLA');
+    }
+  }
+
+  /** The airship's turrets shoot through the bandits' pool. */
+  turretFire(muzzle, dir, k) {
+    tv2.copy(dir).add(spreadV.set(rnd(-0.06, 0.06), rnd(-0.06, 0.06), rnd(-0.06, 0.06))).normalize().multiplyScalar(BULLET_SPEED * 0.85);
+    this.enemyBullets.spawn(muzzle, tv2, this.airship, 2 + this.wave * 0.3);
+    this.effects.muzzle(muzzle);
+    this.audio.gun(muzzle.distanceTo(this.player.pos));
+  }
+
+  /** The airship is down: the escorts break off through the portal and the wave is over. */
+  airshipDown() {
+    this.registerKill('AIRSHIP DOWN', 300 * this.wave);
+    this.shakeAt(this.airship.pos, 1.2);
+    this.audio.explosion(this.airship.pos.distanceTo(this.player.pos), 2.4);
+    this.killCam = 1.4; this.killPoint.copy(this.airship.pos);
+    this.killAngle = Math.atan2(this.camera.position.x - this.airship.pos.x, this.camera.position.z - this.airship.pos.z);
+    let fled = 0;
+    for (const e of this.enemies) { if (!e.ac.alive) continue; this.effects.spawnFlash(e.ac.pos, 5, 0.25); e.ac.alive = false; e.ac.hide(); for (const t of e.ac.trails) this.trails.reset(t); e.pending = 0; fled++; }
+    if (fled) this.hud.kill('ESCORTS FLEE');
+  }
+
+  /** A bandit's bullet just whistled past you: a crack, a nudge of the camera, a flick of the crosshair. */
+  whiz() {
+    this.audio.whiz();
+    this.camKick = Math.min(1, this.camKick + 0.3);
+    this.hud.whiz();
   }
 
   /** Bandits still waiting inside the portal. Derived every time so it can never drift out of sync. */
@@ -233,12 +297,21 @@ export class Game {
 
   nearestEnemy(range) {
     let best = null, bestD = range * range;
-    for (const e of this.enemies) {
-      if (!e.ac.alive) continue;
-      const d = e.ac.pos.distanceToSquared(this.player.pos);
-      if (d < bestD) { bestD = d; best = e.ac.pos; }
+    for (const t of this.targetList) {
+      if (!t.alive || t.absorb) continue;
+      const d = t.pos.distanceToSquared(this.player.pos);
+      if (d < bestD) { bestD = d; best = t.pos; }
     }
     return best;
+  }
+
+  /** Rebuilds the shared target list without allocating: live bandits, then the airship's hulls when it is up. */
+  collectTargets() {
+    const list = this.targetList;
+    list.length = 0;
+    for (const e of this.enemies) if (e.ac.alive) list.push(e.ac);
+    if (this.airship.alive && this.airship.falling === 0) for (const h of this.airship.targets) list.push(h);
+    return list;
   }
 
   /** A wingtip shot off at half health tumbles away as a big shard. */
@@ -282,7 +355,7 @@ export class Game {
     const pts = base * this.combo;
     this.addScore(pts);
     this.hud.kill(`${label}  +${pts}`);
-    if (this.combo > 1) this.hud.combo(this.combo);
+    if (this.combo > 1) { this.hud.combo(this.combo); this.effects.shake = Math.max(this.effects.shake, 0.25 + this.combo * 0.08); }
     this.hud.bump('score');
     this.audio.kill(this.combo);
   }
@@ -368,6 +441,7 @@ export class Game {
           this.cushioned += dt;
         }
       }
+      this.collectTargets();
       p.lookTarget = this.nearestEnemy(400);
       p.update(dt);
       this.shedTip(p);
@@ -419,25 +493,41 @@ export class Game {
       this.smokeTrail(ac, dt);
     }
     if (p.alive) this.smokeTrail(p, dt);
+    // ---- the airship
+    if (this.airship.alive) {
+      if (this.airship.update(dt, p, (muzzle, dir, k) => this.turretFire(muzzle, dir, k))) this.airshipDown();
+      else alive++;   // still up, or still falling: the wave is not over until it hits
+    }
 
     // ---- bullets
-    const enemiesAlive = this.aliveEnemies();
-    this.playerBullets.update(dt, enemiesAlive, (t, point, dmg) => {
+    const targets = this.collectTargets();
+    this.playerBullets.update(dt, targets, (t, point, dmg) => {
       this.effects.hitSpark(point);
       this.audio.hit(t.pos.distanceTo(p.pos));
       this.hits++; this.waveHits++;
+      if (t.absorb) { this.addScore(1); return; }   // the envelope: a spark and nothing else
       if (t.damage(dmg)) {
-        this.killAircraft(t, 1); this.registerKill('BANDIT DOWN', 100 * this.wave);
+        if (t.ship) { this.addScore(10); return; }   // the gondola is done: the airship handles its own fall
+        const type = this.enemies.find((e) => e.ac === t)?.type || 'hound';
+        this.killAircraft(t, 1); this.registerKill(TYPE_LABEL[type], TYPE_SCORE[type] * this.wave);
         if (p.pos.y - groundAt(p.pos.x, p.pos.z) < 8) this.earn('wavetop');
-        if (this.pending === 0 && this.aliveEnemies().length === 0) {
+        if (this.pending === 0 && this.aliveEnemies().length === 0 && !this.airship.alive) {
           // the wave's last bandit: swing the camera round its explosion in slow motion
           this.killCam = 0.7; this.killPoint.copy(t.pos);
           this.killAngle = Math.atan2(this.camera.position.x - t.pos.x, this.camera.position.z - t.pos.z);
-        } else this.hitStop = 0.05;
+        } else this.hitStop = Math.min(0.11, 0.05 + 0.02 * (this.combo - 1));   // a chain freezes a touch longer
       }
       else this.addScore(2);
     }, (pt, water) => this.effects.groundHit(pt, water), this.assist);
-    this.enemyBullets.update(dt, p.alive ? [p] : [], (t, point, dmg) => { this.effects.hitSpark(point); this.hurtPlayer(dmg); }, (pt, water) => this.effects.groundHit(pt, water));
+    this.enemyBullets.update(dt, p.alive ? [p] : [], (t, point, dmg, owner) => { this.effects.hitSpark(point); if (owner === this.airship) this.turretDamage += dmg; this.hurtPlayer(dmg); }, (pt, water) => this.effects.groundHit(pt, water));
+    if (p.alive) {   // near misses: a bandit's bullet inside ten units of you that did not hit
+      const eb = this.enemyBullets, P = eb.pos;
+      for (const i of eb.active) {
+        if (eb.passed[i]) continue;
+        const i3 = i * 3, dx = P[i3] - p.pos.x, dy = P[i3 + 1] - p.pos.y, dz = P[i3 + 2] - p.pos.z;
+        if (dx * dx + dy * dy + dz * dz < 100) { eb.passed[i] = 1; this.whiz(); }
+      }
+    }
 
     // ---- waves
     if (this.state === 'playing') {
@@ -469,8 +559,8 @@ export class Game {
       const p = this.player;
       const enemiesAlive = this.aliveEnemies();
       this.hud.updateStats({ score: this.score, wave: this.wave, enemies: (this.aliveCount || 0) + this.pending, total: this.waveSize || 0, health: p.health, maxHealth: p.maxHealth, speed: p.speed, maxSpeed: PLAYER_STATS.maxSpeed * 1.2, boost: p.input.throttle > 0, firing: this.input.fire }, dt);
-      const lead = this.computeLead(enemiesAlive);
-      this.hud.updateOverlay(this.camera, p, enemiesAlive, lead.point, lead.locked);
+      const lead = this.computeLead(this.targetList);
+      this.hud.updateOverlay(this.camera, p, this.targetList, lead.point, lead.locked);
     }
   }
 
@@ -558,6 +648,7 @@ export class Game {
     const p = this.player;
     let best = null, bestD = 620;
     for (const e of enemies) {
+      if (e.absorb || !e.alive) continue;
       const d = e.pos.distanceTo(p.pos);
       if (d < bestD && p.forward.dot(tv.copy(e.pos).sub(p.pos).normalize()) > 0.6) { best = e; bestD = d; }
     }

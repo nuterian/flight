@@ -1,7 +1,7 @@
 import * as THREE from 'three/webgpu';
 import { groundAt, BOUNDS } from './terrain.js';
 
-const tv = new THREE.Vector3(), aim = new THREE.Vector3(), ahead = new THREE.Vector3();
+const tv = new THREE.Vector3(), aim = new THREE.Vector3(), ahead = new THREE.Vector3(), perch = new THREE.Vector3();
 const clamp = THREE.MathUtils.clamp;
 const rnd = (a, b) => a + Math.random() * (b - a);
 
@@ -12,11 +12,18 @@ const rnd = (a, b) => a + Math.random() * (b - a);
  * and wanders too. The pack shares a hunting cap (`pack.max`): the rest of a big wave loiters until a slot frees.
  * Skill (0.35..1) lengthens the patience, shortens the wandering and sharpens the reactions, so wave 1 is loose and
  * wave 10 is tight. Measured with `__aiProfile` in dev.js.
+ *
+ * Three personalities share the machine. The hound is the plain chaser above. The interceptor is fast and turns
+ * badly: it climbs to a perch above you and dives through in a slashing pass, then climbs again. The ace is rare:
+ * it barrel-rolls when you get on its tail instead of jinking, and after a pass it turns straight back for a
+ * second one before it goes off to cruise.
  */
 export class EnemyBrain {
-  constructor(aircraft, skill) {
+  constructor(aircraft, skill, type = 'hound') {
     this.ac = aircraft;
     this.skill = skill;                // 0.35 .. 1
+    this.type = type;
+    this.passes = 0;                   // the ace's two-pass attack
     this.state = 'pursue';
     this.next = 'pursue';              // where a breakaway, an evade or a return leads afterwards
     this.timer = 0;
@@ -36,7 +43,7 @@ export class EnemyBrain {
     this.wantsFire = false;
   }
 
-  rollPatience() { return rnd(4, 7) * (0.7 + this.skill * 0.6); }
+  rollPatience() { return rnd(4, 7) * (0.7 + this.skill * 0.6) * (this.type === 'interceptor' ? 1.5 : 1); }
   rollTailPatience() { return rnd(2, 3.5) + this.skill * 2; }
 
   /** Off for a cruise: a few seconds of not hunting, shorter the better the pilot. */
@@ -65,8 +72,16 @@ export class EnemyBrain {
   }
 
   evade(next) {
+    if (this.type === 'ace') { this.state = 'barrel'; this.next = next; this.timer = rnd(1.3, 1.8); this.evadeRoll = Math.random() < 0.5 ? -1 : 1; return; }
     this.state = 'evade'; this.next = next; this.timer = rnd(1.2, 2.4);
     this.evadeRoll = Math.random() < 0.5 ? -1 : 1; this.evadePitch = rnd(0.5, 1);
+  }
+
+  /** After a close pass: the ace comes straight back once, everyone else goes off to cruise. */
+  afterPass() {
+    if (this.type === 'ace' && this.passes === 0) { this.passes = 1; return 'pursue'; }
+    this.passes = 0;
+    return 'wander';
   }
 
   /** `pack` is shared by the wave: how many bandits are pursuing right now and how many may. */
@@ -101,7 +116,7 @@ export class EnemyBrain {
       this.engaged += dt;
       this.tailing = dist < 130 && toPlayer.z > 0 ? this.tailing + dt : 0;
       if (!player.alive) { this.state = 'patrol'; this.timer = 2; }
-      else if (dist < 60 && toPlayer.z > 0) this.breakaway('wander');                                  // the pass: break before a collision
+      else if (dist < 60 && toPlayer.z > 0) this.breakaway(this.afterPass());                         // the pass: break before a collision
       else if (this.tailing > this.tailPatience) this.breakaway('wander');                            // sat on you long enough
       else if (this.engaged > this.patience) { if (dist < 160) this.breakaway('wander'); else this.startWander(player); }
       else if (dist > this.leash && playerBehind && this.engaged > 1) this.startWander(player);      // lost you: give up for now
@@ -129,10 +144,19 @@ export class EnemyBrain {
     // --- behaviours
     inp.yaw = 0; this.wantsFire = false;
     if (this.state === 'pursue') {
+      const above = ac.pos.y - player.pos.y;
+      if (this.type === 'interceptor' && above < 70 && dist > 140) {
+        // the interceptor climbs to a perch above and beside you, then comes down through you in a slash
+        perch.copy(ac.pos).sub(player.pos).setY(0).normalize().multiplyScalar(150).add(player.pos);
+        perch.y = Math.min(player.pos.y + 170, BOUNDS.ceiling - 120);
+        this.steerTo(perch, 1);
+        inp.throttle = 1;
+        return;
+      }
       // steer toward a lead point so the enemy actually ends up behind you
       aim.copy(player.pos).addScaledVector(player.velocity, dist > 150 ? 0.9 : 0.35).add(this.wander);
       this.steerTo(aim, 1);
-      inp.throttle = dist > 260 ? 1 : (dist < 70 ? -0.6 : (player.speed > ac.speed ? 0.5 : 0));
+      inp.throttle = this.type === 'interceptor' ? 1 : (dist > 260 ? 1 : (dist < 70 ? -0.6 : (player.speed > ac.speed ? 0.5 : 0)));
       // firing: only when the gun solution is good
       const gunAim = aim.copy(player.pos).addScaledVector(player.velocity, dist / 340);
       const l = ac.toLocal(gunAim, tv);
@@ -151,6 +175,8 @@ export class EnemyBrain {
       inp.throttle = -0.15;
     } else if (this.state === 'evade') {
       inp.roll = this.evadeRoll; inp.pitch = this.evadePitch; inp.throttle = 1;
+    } else if (this.state === 'barrel') {   // the ace's corkscrew: full roll with a little pull, straight through
+      inp.roll = this.evadeRoll; inp.pitch = 0.45; inp.throttle = 1;
     } else if (this.state === 'breakaway') {
       inp.roll = this.evadeRoll * 0.9; inp.pitch = 0.75; inp.throttle = 1;
     } else if (this.state === 'return') {

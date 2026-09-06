@@ -17,7 +17,7 @@ export class Sound {
     document.addEventListener('visibilitychange', wake);
     window.addEventListener('keydown', wake); window.addEventListener('pointerdown', wake);
     this.warnTimer = 0; this.warnHi = false;
-    this.lastGun = 0; this.lastHit = 0;
+    this.lastGun = 0; this.lastHit = 0; this.lastWhiz = 0;
   }
 
   /** Creates the graph. Must be called from a user gesture (start). */
@@ -152,6 +152,16 @@ export class Sound {
   portalPop() { if (!this.ctx) return; this.tone(880, 'sine', 0.12, 0.13); this.tone(1320, 'sine', 0.2, 0.1, 0.06); }
   /** Punching through top speed. */
   boom() { if (!this.ctx) return; this.burst(320, 'lowpass', 0.28, 0.5, 0.005); this.blip(95, 38, 'sine', 0.32, 0.55); }
+
+  /** A bullet whistling past: a short high crack with a falling tail. */
+  whiz() {
+    if (!this.ctx) return;
+    const t = this.ctx.currentTime;
+    if (t - this.lastWhiz < 0.08) return;
+    this.lastWhiz = t;
+    this.burst(5000, 'highpass', 0.05, 0.14, 0.002);
+    this.blip(2400, 700, 'sine', 0.09, 0.08);
+  }
 
   /** A medal: three soft rising notes, quieter than a wave clear. */
   medal() {
