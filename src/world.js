@@ -3,8 +3,8 @@ import {
   color, positionLocal, positionWorld, normalize, mix, smoothstep, dot, float, vec2, vec3, attribute, time, sin, cos,
   saturate, pow, uniform, fog, rangeFogFactor, instanceIndex, hash, cameraPosition, reflect, transformNormalToView, mx_noise_float, reflector, uv, abs, fract, max as tslMax, min as tslMin, length, exp, floor, select, normalWorld, vertexColor, step, dot as tslDot, luminance, positionView, texture, Fn,
 } from 'three/tsl';
-import { ensureGrid, heightAt, levelAtCell, cellKind, cellWater, cellTop, levelTop, waterfalls, isSeaAt, KIND, N as HALF_CELLS, CELL, BOUNDS } from './terrain.js';
-import { Boxes, local, softParam, STRIP } from './boxes.js';
+import { ensureGrid, heightAt, levelAtCell, cellKind, cellWater, cellTop, levelTop, isSeaAt, KIND, N as HALF_CELLS, CELL, BOUNDS, SCALE } from './terrain.js';
+import { Boxes, local } from './boxes.js';
 import { Trails } from './trails.js';
 import { buildLandmarks, findArenas } from './landmarks.js';
 
@@ -48,7 +48,7 @@ const WALL = { dirt: C(0xa27a52), sand: C(0xd8c17f), rock: C(0x8f6a45), stone: C
 const tmpC = new THREE.Color();
 function topColor(i, j, out) {
   const k = cellKind(i, j), top = cellTop(i, j);
-  if (k === KIND.GRASS || k === KIND.MEADOW) return out.copy(GRASS_LO).lerp(GRASS_HI, THREE.MathUtils.clamp(top / 66, 0, 1));
+  if (k === KIND.GRASS || k === KIND.MEADOW) return out.copy(GRASS_LO).lerp(GRASS_HI, THREE.MathUtils.clamp(top / (66 * SCALE), 0, 1));
   return out.copy(TOP[k] || GRASS_LO);
 }
 function wallColor(kind, out) {
@@ -324,27 +324,6 @@ function buildFreshWater(material) {
   return mesh;
 }
 
-// Waterfalls: a streaming strip down the drop, a foam pool where it lands, spray on the big ones.
-function buildWaterfalls(soft) {
-  const q = new THREE.Quaternion(), qy = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI / 2);
-  const flat = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), -Math.PI / 2);
-  const m = new THREE.Matrix4(), p = new THREE.Vector3(), sc = new THREE.Vector3();
-  const big = [];
-  for (const f of waterfalls()) {
-    const acrossX = f.dirX !== 0;               // water flows along x: the strip's face must look along x
-    q.copy(acrossX ? qy : new THREE.Quaternion());
-    const strip = soft.alloc(); if (strip < 0) break;
-    soft.color(strip, 0xd6f2ff); soft.scalar(strip, softParam(0.78, STRIP));
-    soft.matrix(strip, m.compose(p.set(f.x, (f.top + f.bottom) / 2 + 0.3, f.z), q, sc.set(f.width * 0.8, f.drop + 0.6, 0.5)));
-    const pool = soft.alloc(); if (pool < 0) break;
-    const px = f.x + f.dirX * f.width * 0.5, pz = f.z + f.dirZ * f.width * 0.5;
-    soft.color(pool, 0xffffff); soft.scalar(pool, softParam(0.4, 0));
-    soft.matrix(pool, m.compose(p.set(px, f.bottom + 0.3, pz), flat, sc.set(f.width * 1.3, f.width * 1.3, 1)));
-    if (f.drop >= 8) big.push({ x: f.x, y: f.bottom, z: f.z, drop: f.drop, dirX: f.dirX, dirZ: f.dirZ, width: f.width });
-  }
-  return big;
-}
-
 // ---------------------------------------------------------------- water
 // Directional wave set: [dirX, dirZ, wavenumber, amplitude, speed]. Slopes are analytic so the normal is exact.
 const WAVES = [
@@ -483,7 +462,7 @@ function buildBounds() {
 
 // Smooth sandy seafloor visible through the shallows.
 function buildSeafloor() {
-  const size = 3600, seg = 180;
+  const size = 3600 * SCALE, seg = 180;
   const geo = new THREE.PlaneGeometry(size, size, seg, seg);
   geo.rotateX(-Math.PI / 2);
   const p = geo.attributes.position;
@@ -548,7 +527,7 @@ function buildClouds() {
   let total = 0;
   for (let i = 0; i < 44; i++) {
     const cells = cloudShape();
-    clouds.push({ x: rand(-2200, 2200), y: rand(420, 530), z: rand(-2200, 2200), vx: rand(5, 9), cells, scale: rand(0.8, 1.4) });
+    clouds.push({ x: rand(-2200, 2200) * SCALE, y: rand(440, 560), z: rand(-2200, 2200) * SCALE, vx: rand(5, 9), cells, scale: rand(0.8, 1.4) });
     total += cells.length;
   }
   const geo = new THREE.BoxGeometry(CS, TH, CS);
@@ -562,7 +541,7 @@ function buildClouds() {
     let i = 0;
     for (const c of clouds) {
       c.x += c.vx * dt;
-      if (c.x > 2400) c.x = -2400;
+      if (c.x > 2400 * SCALE) c.x = -2400 * SCALE;
       s.setScalar(c.scale);
       for (const [cx, cz] of c.cells) {
         p.set(c.x + cx * CS * c.scale, c.y, c.z + cz * CS * c.scale);
@@ -639,7 +618,7 @@ function buildProps(scene, lit, glow) {
     rings.forEach(([w, h], k) => { parts.push([0, y + h / 2, 0, w, h, w, k % 2 ? c2 : c1]); y += h; });
     parts.push([0, -1.5, 0, 3, 3, 3, 0xd8b58c], [0, -8.5, 0, 4, 3, 4, 0xb48a5c]);                  // skirt, basket
     for (const [rx, rz] of [[-1.6, -1.6], [1.6, -1.6], [-1.6, 1.6], [1.6, 1.6]]) parts.push([rx, -4.5, rz, 0.25, 5, 0.25, 0x6b5442]);
-    const a = rand(0, Math.PI * 2), rad = rand(300, 1100);
+    const a = rand(0, Math.PI * 2), rad = rand(300, 1100) * SCALE;
     const burner = glow.alloc();
     glow.color(burner, 0xffb050);
     balloons.push({ ...group(parts), burner, x: Math.cos(a) * rad, y: rand(150, 300), z: Math.sin(a) * rad, phase: rand(0, 6), drift: rand(1.5, 3.5), rot: rand(0, 6) });
@@ -650,7 +629,7 @@ function buildProps(scene, lit, glow) {
   let tries = 0;
   const wakes = new Trails(scene, 18, 30, 1.3, { fade: 0.11, opacity: 0.55, sample: 0.3, widen: true, renderOrder: 4 });
   while (boats.length < 9 && tries++ < 6000) {
-    const x = rand(-1400, 1400), z = rand(-1400, 1400);
+    const x = rand(-1400, 1400) * SCALE, z = rand(-1400, 1400) * SCALE;
     const h = heightAt(x, z);
     if (h > -8 || h < -34 || !isSeaAt(x, z)) continue;
     const hull = FUN[boats.length % FUN.length];
@@ -673,7 +652,7 @@ function buildProps(scene, lit, glow) {
     const members = [];
     const n = 3 + Math.floor(rand(0, 7));
     for (let k = 0; k < n; k++) members.push({ start: bird(BIRD_DARK), flap: rand(0, 6), bob: rand(0, 6) });
-    flocks.push({ members, x: rand(-1200, 1200), z: rand(-1200, 1200), y: rand(90, 300), heading: rand(0, 6.3), turn: 0, speed: rand(14, 22), phase: rand(0, 6), yBase: rand(90, 300) });
+    flocks.push({ members, x: rand(-1200, 1200) * SCALE, z: rand(-1200, 1200) * SCALE, y: rand(90, 300), heading: rand(0, 6.3), turn: 0, speed: rand(14, 22), phase: rand(0, 6), yBase: rand(90, 300) });
   }
   // --- gulls resting on beaches; they scatter when a plane buzzes them and settle back down
   const gullSpots = [];
@@ -798,7 +777,7 @@ function buildProps(scene, lit, glow) {
       let hurry = 1;
       if (f.scared > 0) { f.scared -= dt; want = f.scareTurn; hurry = 1.7; }   // a blast nearby: wheel away, hard and fast
       const dist = Math.hypot(f.x, f.z);
-      if (dist > 1250) {
+      if (dist > 1250 * SCALE) {
         const home = Math.atan2(-f.x, -f.z);
         let d = home - f.heading; d = Math.atan2(Math.sin(d), Math.cos(d));
         want += THREE.MathUtils.clamp(d, -0.6, 0.6);
@@ -918,7 +897,6 @@ export function createWorld(scene, { mobile, lit, glow, soft }) {
   const seafloor = buildSeafloor();
   const water = buildWater({ mobile });
   const fresh = buildFreshWater(water.lakeMaterial);
-  const bigFalls = soft ? buildWaterfalls(soft) : [];
   const sky = buildSky(sunDirUniform, tod);
   const sunSlot = glow.alloc();
   glow.color(sunSlot, 0xfff3d6); glow.scalar(sunSlot, 4);
@@ -1008,7 +986,5 @@ export function createWorld(scene, { mobile, lit, glow, soft }) {
     sm.needsUpdate = (frameNo++ % shadow.every) === 0;
   };
 
-  /** Distance to the nearest big waterfall (for its rumble). */
-  const nearestFall = (pos) => { let d = Infinity; for (const f of bigFalls) d = Math.min(d, Math.hypot(pos.x - f.x, pos.y - f.y, pos.z - f.z)); return d; };
-  return { update, setDanger: bounds.setDanger, props, nearestFall, bigFalls, sunScreen, smear, clouds: clouds.clouds, brushPalms: props.brushPalms, scare: props.scare, setTimeOfDay, get timeOfDay() { return timeOfDay; }, landmarks, arenas, shadow, bakeMs: bake.ms };
+  return { update, setDanger: bounds.setDanger, props, sunScreen, smear, clouds: clouds.clouds, brushPalms: props.brushPalms, scare: props.scare, setTimeOfDay, get timeOfDay() { return timeOfDay; }, landmarks, arenas, shadow, bakeMs: bake.ms };
 }

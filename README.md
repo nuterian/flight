@@ -71,12 +71,12 @@ Three.js r185 `WebGPURenderer` with TSL node materials, no frameworks, no assets
 note is generated in code.
 
 - **World.** A composed heightfield (warped coastlines, ridged mountains, hills) is flooded into lakes, drained into
-  rivers that carve valleys and cascade over cliffs, and quantized into terraces on a 5-unit grid. Water is a
+  rivers that carve valleys, and quantized into terraces on a 7-unit grid (designed at 5 and scaled up 1.4x, so the
+  land reads large against the trees and the plane). Water is a
   six-wave analytic surface with a real planar reflection. Per-block tone, strata, grass fringes, moss and lichen
   are done in the fragment shader.
 - **Everything is a box.** Every voxel in the game is an instance of one unit cube in a handful of batches: lit,
-  palm fronds (with wind and downwash), glow (tracers, flames, the sun) and soft (prop discs, splash rings,
-  waterfalls). A plane is a table of 30-odd boxes placed under its matrix each frame, control surfaces, flexing
+  palm fronds (with wind and downwash), glow (tracers, flames, the sun) and soft (prop discs, splash rings). A plane is a table of 30-odd boxes placed under its matrix each frame, control surfaces, flexing
   wingtips, retracting gear and pilot included.
 - **Bandits.** Each has a small state machine: pursue with a lead point, a close pass, break away, then a spell of
   wandering between loose waypoints in which it is not looking for you. Patience, leash and reaction sharpen with

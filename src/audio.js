@@ -64,19 +64,11 @@ export class Sound {
     s.a.connect(s.lp); s.b.connect(s.lp); s.lp.connect(s.gain); s.gain.connect(this.bus);
     s.a.start(); s.b.start();
 
-    // waterfall: a low rumble you only hear near the big drops
-    const f = this.fall = { src: ctx.createBufferSource(), lp: ctx.createBiquadFilter(), gain: ctx.createGain() };
-    f.src.buffer = buf; f.src.loop = true; f.src.loopStart = 0.7;
-    f.lp.type = 'lowpass'; f.lp.frequency.value = 380; f.lp.Q.value = 0.5;
-    f.gain.gain.value = 0;
-    f.src.connect(f.lp); f.lp.connect(f.gain); f.gain.connect(this.bus);
-    f.src.start();
   }
 
-  /** Ambient layers: `fall` is 0..1 closeness to the nearest big waterfall, `ship` 0..1 closeness to the airship. */
-  setAmbience(fall, ship = 0) {
+  /** Ambient layers: `ship` is 0..1 closeness to the airship. */
+  setAmbience(ship = 0) {
     if (!this.ctx) return;
-    this.fall.gain.gain.setTargetAtTime(fall * fall * 0.5, this.ctx.currentTime, 0.25);
     this.ship.gain.gain.setTargetAtTime(ship * ship * 0.32, this.ctx.currentTime, 0.3);
   }
 

@@ -6,20 +6,25 @@
 // terraces whose height grows with altitude (3-unit steps on the shore, 6 in the hills, 12 in the mountains).
 import { ImprovedNoise } from 'three/addons/math/ImprovedNoise.js';
 
-export const WORLD_SIZE = 3200;      // terrain extent
+// The geology is designed on a 3200-unit map of 5-unit columns and then scaled up: every column is SCALE times
+// wider and the land SCALE times taller, so the same islands, rivers and terraces come out larger against the
+// trees, the houses and the plane, at the same grid cost.
+export const SCALE = 1.4;
+const BASE_SIZE = 3200, BASE_CELL = 5;
+export const WORLD_SIZE = BASE_SIZE * SCALE;      // terrain extent
 /** Combat zone: an invisible box. Leaving it starts a 10 second countdown. */
-export const BOUNDS = { half: 1500, ceiling: 650, grace: 10 };
+export const BOUNDS = { half: 1500 * SCALE, ceiling: 720, grace: 10 };
 export const SEA_LEVEL = 0;
-export const CELL = 5;               // voxel column footprint
+export const CELL = BASE_CELL * SCALE;            // voxel column footprint
 export const N = WORLD_SIZE / CELL / 2;   // cells from the centre to the edge
 const W = 2 * N + 2;                 // grid width, one guard cell on each side
 export const KIND = { SEA: 0, LAKE: 1, RIVER: 2, SAND: 3, WETSAND: 4, GRASS: 5, MEADOW: 6, ROCK: 7, STONE: 8, SNOW: 9 };
 
 // Terrace tops. Level L occupies [TOPS[L-1], TOPS[L]) and its top face sits at TOPS[L]; level 0 is the sea bed.
 export const TOPS = [0];
-for (let t = 3; t <= 12; t += 3) TOPS.push(t);
-for (let t = 18; t <= 60; t += 6) TOPS.push(t);
-for (let t = 72; t <= 252; t += 12) TOPS.push(t);
+for (let t = 3; t <= 12; t += 3) TOPS.push(t * SCALE);
+for (let t = 18; t <= 60; t += 6) TOPS.push(t * SCALE);
+for (let t = 72; t <= 252; t += 12) TOPS.push(t * SCALE);
 export const levelTop = (L) => TOPS[Math.min(Math.max(L, 0), TOPS.length - 1)];
 export function levelOfHeight(h) {
   if (h < 0) return 0;
@@ -53,12 +58,13 @@ function ridged(x, z, octaves, seed = 3.7) {
 let lastMountain = 0;
 /** The smooth, un-carved height field. Negative below sea level. Leaves the mountain weight in `lastMountain`. */
 function smoothHeight(x, z) {
+  x /= SCALE; z /= SCALE;   // the design space
   // warp the domain so coastlines twist into bays, spits and fjords instead of blobs
   const wx = x + 300 * n2(x / 950 + 3.1, z / 950 + 7.7, 11.3);
   const wz = z + 300 * n2(x / 950 - 5.2, z / 950 + 1.3, 17.9);
   let land = fbm(wx / 1050 + 13.7, wz / 1050 + 4.2, 4) * 2.6;
   land += fbm(wx / 330 + 5.5, wz / 330 + 9.1, 2) * 0.45;
-  const r = Math.hypot(x, z) / (WORLD_SIZE * 0.5);
+  const r = Math.hypot(x, z) / (BASE_SIZE * 0.5);
   land += 0.16 - Math.pow(Math.min(r, 1.25), 5) * 1.9;
   if (land < 0) { lastMountain = 0; return land * 85; }             // sea floor
   const inland = smooth01((land - 0.10) / 0.35);
@@ -68,12 +74,12 @@ function smoothHeight(x, z) {
   let h = land * 60;
   h += mountain * 150;
   h += fbm(wx / 170 + 1.7, wz / 170 + 8.3, 2, 5.5) * 9 * smooth01(land / 0.08);   // hills, faded out at the shore
-  return h;
+  return h * SCALE;   // the land grows with the map; the sea floor keeps its depths, so the water looks the same
 }
 const smooth01 = (t) => { t = t < 0 ? 0 : t > 1 ? 1 : t; return t * t * (3 - 2 * t); };
 
 // ---------------------------------------------------------------- the grid
-let H = null, M = null, F = null, LEVEL = null, WATER = null, KINDS = null, DOWN = null, ACC = null, FALLS = null;
+let H = null, M = null, F = null, LEVEL = null, WATER = null, KINDS = null, DOWN = null, ACC = null;
 const idx = (i, j) => (i + N + 1) * W + (j + N + 1);
 
 /** Binary min-heap of cell indices keyed by a float array. */
@@ -210,31 +216,17 @@ export function ensureGrid() {
       if (LEVEL[n] === 0 || WATER[n] >= 0) wet = true;
     }
     const x = (ci - N - 1) * CELL, z = (cj - N - 1) * CELL;
-    const snowline = 112 + n2(x / 260 + 9.1, z / 260 + 2.4, 21.7) * 26;
+    const snowline = (112 + n2(x / (260 * SCALE) + 9.1, z / (260 * SCALE) + 2.4, 21.7) * 26) * SCALE;
     if (top >= snowline) KINDS[c] = KIND.SNOW;
-    else if (top >= 90 || (m > 0.45 && top >= 54)) KINDS[c] = KIND.STONE;
-    else if ((m > 0.3 && top >= 24) || steep >= 3) KINDS[c] = KIND.ROCK;
-    else if (top <= 6 && m < 0.25) KINDS[c] = wet ? KIND.WETSAND : KIND.SAND;
-    else if (top <= 42) KINDS[c] = KIND.GRASS;
+    else if (top >= 90 * SCALE || (m > 0.45 && top >= 54 * SCALE)) KINDS[c] = KIND.STONE;
+    else if ((m > 0.3 && top >= 24 * SCALE) || steep >= 3) KINDS[c] = KIND.ROCK;
+    else if (top <= 6 * SCALE && m < 0.25) KINDS[c] = wet ? KIND.WETSAND : KIND.SAND;
+    else if (top <= 42 * SCALE) KINDS[c] = KIND.GRASS;
     else KINDS[c] = KIND.MEADOW;
   }
 
-  // 7. waterfalls: where a river drops onto lower water
-  FALLS = [];
-  for (const c of land) {
-    if (!isRiver[c]) continue;
-    const d = DOWN[c];
-    if (d < 0) continue;
-    const below = WATER[d] >= 0 ? WATER[d] : (LEVEL[d] === 0 ? 0 : -1);
-    if (below < 0) continue;
-    const drop = WATER[c] - below;
-    if (drop < 1.5) continue;
-    const ci = Math.floor(c / W), cj = c % W, di = Math.floor(d / W), dj = d % W;
-    const x = ((ci + di) / 2 - N - 1) * CELL, z = ((cj + dj) / 2 - N - 1) * CELL;
-    FALLS.push({ x, z, top: WATER[c], bottom: below, drop, dirX: di - ci, dirZ: dj - cj, width: ACC[c] >= RIVER_MIN * 3 ? 3 * CELL : CELL });
-  }
   const t1 = typeof performance !== 'undefined' ? performance.now() : Date.now();
-  if (typeof console !== 'undefined') console.info(`terrain: ${W}x${W} cells, ${nLand} land, ${FALLS.length} waterfalls in ${Math.round(t1 - t0)} ms`);
+  if (typeof console !== 'undefined') console.info(`terrain: ${W}x${W} cells, ${nLand} land in ${Math.round(t1 - t0)} ms`);
 }
 
 // ---------------------------------------------------------------- queries
@@ -259,7 +251,6 @@ export function cellKind(i, j) { ensureGrid(); return inGrid(i, j) ? KINDS[idx(i
 export function cellWater(i, j) { ensureGrid(); return inGrid(i, j) ? WATER[idx(i, j)] : -1; }
 export function cellTop(i, j) { return levelTop(levelAtCell(i, j)); }
 export function mountainAt(i, j) { ensureGrid(); return inGrid(i, j) ? M[idx(i, j)] : 0; }
-export function waterfalls() { ensureGrid(); return FALLS; }
 
 /** Walkable ground height under (x, z): the terrace top, or the water surface over sea, lake or river. */
 export function groundAt(x, z) {

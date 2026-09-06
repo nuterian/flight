@@ -212,7 +212,7 @@ export class Game {
       const from = tv2.set(tv.x, 0, tv.z).sub(this.player.pos).setY(0).normalize().multiplyScalar(1000).add(this.player.pos);
       const lim = BOUNDS.half - 400;
       from.x = clamp(from.x, -lim, lim); from.z = clamp(from.z, -lim, lim);
-      this.airship.spawn(from, this.player.pos, clamp(this.player.pos.y + 60, 220, 360), 140 + this.wave * 12);   // 18 gondola hits on wave 5, 24 on wave 10
+      this.airship.spawn(from, this.player.pos, clamp(this.player.pos.y + 60, 260, 440), 140 + this.wave * 12);   // 18 gondola hits on wave 5, 24 on wave 10
       this.hud.kill('AIRSHIP · HIT THE GONDOLA');
     }
   }
@@ -626,7 +626,7 @@ export class Game {
     this.updateCamera(dt);
     const alive = this.player.alive && this.state === 'playing';
     this.audio.setFlight(alive ? this.player.speed : 0, alive ? this.player.input.throttle : 0, alive && this.outside, dt, alive ? this.player.health / this.player.maxHealth : 1);
-    if (this.world.nearestFall) this.audio.setAmbience(clamp(1 - this.world.nearestFall(this.camera.position) / 380, 0, 1), this.airship.alive ? clamp(1 - this.airship.pos.distanceTo(this.camera.position) / 420, 0, 1) : 0);
+    this.audio.setAmbience(this.airship.alive ? clamp(1 - this.airship.pos.distanceTo(this.camera.position) / 420, 0, 1) : 0);
     if (this.state === 'playing') {
       const p = this.player;
       const enemiesAlive = this.aliveEnemies();

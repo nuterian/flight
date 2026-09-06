@@ -34,7 +34,7 @@ function findReef() {
   for (let i = -N + 12; i < N - 12; i += 3) for (let j = -N + 12; j < N - 12; j += 3) {
     if (!isSea(i, j)) continue;
     const h = heightAt(i * CELL, j * CELL);
-    if (h > -3.5 || h < -9 || h <= bestH) continue;
+    if (h > -3.5 || h < -9 || h <= bestH) continue;   // sea-floor depths are unscaled
     if (around(i, j, 8, isLand) > 0) continue;
     bestH = h; best = { i, j };
   }
