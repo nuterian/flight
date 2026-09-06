@@ -663,6 +663,17 @@ function buildProps(scene, lit, glow) {
   }
   const placeAnimal = (an, x, y, z, yaw, pitch) => { eul.set(pitch, yaw, 0); lit.place(an.start, an.locals, an.mtx.compose(pos.set(x, y, z), quat.setFromEuler(eul), ONE)); };
 
+  /** An explosion at `at`: every flock within `radius` wheels away from it for a couple of seconds. */
+  const scare = (at, radius) => {
+    for (const f of flocks) {
+      const dx = f.x - at.x, dz = f.z - at.z;
+      if (dx * dx + dz * dz > radius * radius) continue;
+      const away = Math.atan2(-dx, -dz);                     // the heading that points away from the blast
+      let d = away - f.heading; d = Math.atan2(Math.sin(d), Math.cos(d));
+      f.scareTurn = (d >= 0 ? 1 : -1) * 1.6; f.scared = 1.6 + Math.random() * 0.8;
+    }
+  };
+
   /** Fronds fly when a plane clips a palm: calls back once per palm hit, with a cooldown per palm. */
   const brushPalms = (at, dt, onLeaf) => {
     for (const pm of palmList) {
@@ -708,17 +719,19 @@ function buildProps(scene, lit, glow) {
     for (const f of flocks) {
       // wander: a slowly drifting turn rate, plus a pull back toward the middle when far out
       let want = Math.sin(t * 0.11 + f.phase) * 0.28 + Math.sin(t * 0.037 + f.phase * 2.1) * 0.2;
+      let hurry = 1;
+      if (f.scared > 0) { f.scared -= dt; want = f.scareTurn; hurry = 1.7; }   // a blast nearby: wheel away, hard and fast
       const dist = Math.hypot(f.x, f.z);
       if (dist > 1250) {
         const home = Math.atan2(-f.x, -f.z);
         let d = home - f.heading; d = Math.atan2(Math.sin(d), Math.cos(d));
         want += THREE.MathUtils.clamp(d, -0.6, 0.6);
       }
-      f.turn += (want - f.turn) * Math.min(1, dt * 0.8);
+      f.turn += (want - f.turn) * Math.min(1, dt * (f.scared > 0 ? 4 : 0.8));
       f.heading += f.turn * dt;
       const yaw = f.heading;
       const fx = -Math.sin(yaw), fz = -Math.cos(yaw), rx = Math.cos(yaw), rz = -Math.sin(yaw);
-      f.x += fx * f.speed * dt; f.z += fz * f.speed * dt;
+      f.x += fx * f.speed * hurry * dt; f.z += fz * f.speed * hurry * dt;
       f.y = f.yBase + Math.sin(t * 0.07 + f.phase) * 30 + Math.sin(t * 0.23 + f.phase * 3) * 6;
       const climbing = Math.cos(t * 0.07 + f.phase) * 0.07 * 30;   // d/dt of the swell, for the flap rate and pitch
       const bank = -f.turn * 1.4;
@@ -791,7 +804,7 @@ function buildProps(scene, lit, glow) {
     gustAmt.value = THREE.MathUtils.clamp(speed / 80, 0, 1.4);
   };
   update(0, 0, null, 0);
-  return { update, gullSpots, boats, flocks, brushPalms, meadows, villages };
+  return { update, gullSpots, boats, flocks, brushPalms, meadows, villages, scare };
 }
 
 // ---------------------------------------------------------------- assemble
@@ -916,5 +929,5 @@ export function createWorld(scene, { mobile, lit, glow, soft }) {
 
   /** Distance to the nearest big waterfall (for its rumble). */
   const nearestFall = (pos) => { let d = Infinity; for (const f of bigFalls) d = Math.min(d, Math.hypot(pos.x - f.x, pos.y - f.y, pos.z - f.z)); return d; };
-  return { update, setDanger: bounds.setDanger, props, nearestFall, bigFalls, sunScreen, smear, clouds: clouds.clouds, brushPalms: props.brushPalms, setTimeOfDay, get timeOfDay() { return timeOfDay; }, landmarks, arenas, shadow };
+  return { update, setDanger: bounds.setDanger, props, nearestFall, bigFalls, sunScreen, smear, clouds: clouds.clouds, brushPalms: props.brushPalms, scare: props.scare, setTimeOfDay, get timeOfDay() { return timeOfDay; }, landmarks, arenas, shadow };
 }

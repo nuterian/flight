@@ -30,10 +30,11 @@ const X = new THREE.Vector3(1, 0, 0), Y = new THREE.Vector3(0, 1, 0), NEG_Z = ne
 const rnd = (a, b) => a + Math.random() * (b - a);
 const clamp = THREE.MathUtils.clamp;
 
-/** A bullet target with the shape the pool expects: a sphere that may absorb (armour) or take damage (the gondola). */
+/** A bullet target with the shape the pool expects: a sphere that absorbs (armour), takes damage for the ship (the
+ *  gondola) or for one of its turrets. */
 class Hull {
-  constructor(ship, radius, absorb) { this.ship = ship; this.pos = new THREE.Vector3(); this.velocity = ship.velocity; this.stats = { radius }; this.absorb = absorb; this.team = 1; this.alive = false; this.hitFlash = 0; }
-  damage(d) { return this.absorb ? false : this.ship.hurt(d); }
+  constructor(ship, radius, kind, turret = -1) { this.ship = ship; this.pos = new THREE.Vector3(); this.velocity = ship.velocity; this.stats = { radius }; this.absorb = kind === 'armour'; this.turret = turret; this.team = 1; this.alive = false; this.hitFlash = 0; }
+  damage(d) { return this.absorb ? false : this.turret >= 0 ? this.ship.hurtTurret(this.turret, d) : this.ship.hurt(d); }
 }
 
 export class Airship {
@@ -48,10 +49,11 @@ export class Airship {
     this.heading = 0; this.speed = 14; this.alive = false; this.falling = 0; this.hp = 1; this.maxHp = 1;
     this.team = 1; this.prop = 0; this.smoke = 0; this.boom = 0;
     // the envelope as three armoured spheres and the gondola as the one that counts
-    this.gondola = new Hull(this, 12, false);
-    this.armour = [new Hull(this, 15, true), new Hull(this, 17, true), new Hull(this, 14, true)];
-    this.targets = [this.gondola, ...this.armour];
-    this.turrets = TURRETS.map(() => ({ yaw: 0, pitch: 0, timer: rnd(1, 2.5), burst: 0, gun: 0 }));
+    this.gondola = new Hull(this, 12, 'gondola');
+    this.turretHulls = TURRETS.map((_, k) => new Hull(this, 5, 'turret', k));
+    this.armour = [new Hull(this, 15, 'armour'), new Hull(this, 17, 'armour'), new Hull(this, 14, 'armour')];
+    this.targets = [this.gondola, ...this.turretHulls, ...this.armour];
+    this.turrets = TURRETS.map(() => ({ yaw: 0, pitch: 0, timer: rnd(1, 2.5), burst: 0, gun: 0, hp: 30, dead: false, smoke: 0 }));
     this.tilt = 0; this.roll = 0;
     this.matrix = new THREE.Matrix4();
   }
@@ -62,7 +64,20 @@ export class Airship {
     this.heading = Math.atan2(toward.x - from.x, toward.z - from.z);
     this.hp = this.maxHp = hp; this.alive = true; this.falling = 0; this.tilt = 0; this.roll = 0; this.smoke = 0; this.boom = 0;
     for (const t of this.targets) t.alive = true;
+    for (const t of this.turrets) { t.hp = 30; t.dead = false; t.burst = 0; t.pitch = 0; }
     this.place(0);
+  }
+
+  /** A turret can be shot off on its own: it stops firing, its barrel droops and it smokes. Returns true when it goes. */
+  hurtTurret(k, d) {
+    const t = this.turrets[k];
+    if (!this.alive || t.dead) return false;
+    t.hp -= d; this.turretHulls[k].hitFlash = 0.12;
+    if (t.hp > 0) return false;
+    t.dead = true; t.burst = 0; this.turretHulls[k].alive = false;
+    p.copy(TURRETS[k].pivot).applyQuaternion(this.quat).add(this.pos);
+    this.effects.explosion(p, [BRASS, DARK, 0x333333], 0.7);
+    return true;
   }
 
   hurt(d) {
@@ -113,6 +128,12 @@ export class Airship {
     for (let k = 0; k < TURRETS.length; k++) {
       const t = this.turrets[k], T = TURRETS[k];
       p.copy(T.pivot).applyQuaternion(this.quat).add(this.pos);
+      if (t.dead) {   // a dead turret droops and smokes
+        t.pitch += (-0.7 * T.up - t.pitch) * Math.min(1, dt * 2);
+        t.smoke -= dt;
+        if (t.smoke <= 0) { t.smoke = 0.12; this.effects.trailSmoke(p, this.velocity, false); }
+        continue;
+      }
       const dist = p.distanceTo(player.pos);
       v.copy(player.pos).addScaledVector(player.velocity, dist / BULLET_SPEED).sub(p);
       const wantYaw = Math.atan2(v.x, v.z) - this.heading;
@@ -164,6 +185,7 @@ export class Airship {
     for (let k = 0; k < WINDOWS.length; k++) this.glow.matrix(this.windows + k, m2.multiplyMatrices(this.matrix, WINDOW_LOCALS[k]));
     // the hulls ride along: the gondola under the middle, the armour along the envelope
     this.gondola.pos.set(0, -11, 2).applyQuaternion(this.quat).add(this.pos);
+    for (let k = 0; k < TURRETS.length; k++) this.turretHulls[k].pos.copy(TURRETS[k].pivot).applyQuaternion(this.quat).add(this.pos);
     this.armour[0].pos.set(0, 0, -26).applyQuaternion(this.quat).add(this.pos);
     this.armour[1].pos.set(0, 0, 0).applyQuaternion(this.quat).add(this.pos);
     this.armour[2].pos.set(0, 0, 26).applyQuaternion(this.quat).add(this.pos);

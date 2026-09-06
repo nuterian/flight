@@ -145,7 +145,7 @@ export class Game {
       else types.push('hound');
     }
     this.waveSize = count + (boss ? 1 : 0);
-    this.waveShots = 0; this.waveHits = 0;
+    this.waveShots = 0; this.waveHits = 0; this.waveDamage = 0; this.waveKills = 0;
     this.note('wave', this.wave);
     // The learning curve: the first waves are target practice. Bandits are light and slow, do not shoot back on
     // wave 1, and the guns help: targets are fatter and bullets bend toward a bandit near their line of flight.
@@ -249,6 +249,7 @@ export class Game {
   /** The airship is down: the escorts break off through the portal and the wave is over. */
   airshipDown() {
     this.registerKill('AIRSHIP DOWN', 300 * this.wave, this.airship.pos);
+    this.world.scare(this.airship.pos, 400);
     this.shakeAt(this.airship.pos, 1.2);
     this.audio.explosion(this.airship.pos.distanceTo(this.player.pos), 2.4);
     this.killCam = 1.4; this.killPoint.copy(this.airship.pos);
@@ -337,6 +338,7 @@ export class Game {
     const c = ac.plane.scheme;
     this.effects.explosion(ac.pos, [c.body, c.accent, c.trim, 0x333333], size);
     this.effects.wreck(ac.pos, ac.velocity, [c.body, c.accent, c.trim]);
+    if (this.world.scare) this.world.scare(ac.pos, 180);
     this.shakeAt(ac.pos, 0.3 * size);
     this.audio.explosion(ac.pos.distanceTo(this.player.pos), size);
   }
@@ -395,7 +397,7 @@ export class Game {
   /** A shot-down bandit: quick successive kills chain into a combo that multiplies the score. `at` is where the
    *  points pop up in the world. */
   registerKill(label, base, at = null) {
-    this.kills++; this.note('kill');
+    this.kills++; this.waveKills = (this.waveKills || 0) + 1; this.note('kill');
     this.combo = this.comboTimer > 0 ? this.combo + 1 : 1;
     this.bestCombo = Math.max(this.bestCombo, this.combo);
     this.comboTimer = 2.5;
@@ -557,12 +559,14 @@ export class Game {
       this.hits++; this.waveHits++;
       if (t.absorb) { this.addScore(1); return; }   // the envelope: a spark and nothing else
       if (t.damage(dmg)) {
+        if (t.ship && t.turret >= 0) { this.addScore(150); this.hud.kill('TURRET DOWN  +150'); this.hud.popup(t.pos, '+150'); this.audio.explosion(t.pos.distanceTo(p.pos), 0.7); this.world.scare(t.pos, 140); return; }
         if (t.ship) { this.addScore(10); return; }   // the gondola is done: the airship handles its own fall
         const type = this.enemies.find((e) => e.ac === t)?.type || 'hound';
         this.killAircraft(t, 1); this.registerKill(TYPE_LABEL[type], TYPE_SCORE[type] * this.wave, t.pos);
         if (p.pos.y - groundAt(p.pos.x, p.pos.z) < 8) this.earn('wavetop');
         const last = this.pending === 0 && this.aliveEnemies().length === 0 && !this.airship.alive;
-        if (!last && type === 'ace') {   // an ace down earns a short turn of the camera round its wreck
+        if (!last && type === 'ace') {   // an ace down earns a banner and a short turn of the camera round its wreck
+          this.hud.banner('ACE DOWN', 1300);
           this.killCam = 0.4; this.killPoint.copy(t.pos);
           this.killAngle = Math.atan2(this.camera.position.x - t.pos.x, this.camera.position.z - t.pos.z);
         } else if (last) {
@@ -590,6 +594,7 @@ export class Game {
         if (this.waveClearTimer > 0.2 && this.waveClearTimer - dt <= 0.2) {
           this.hud.banner('WAVE CLEAR!', 2200); this.player.health = Math.min(this.player.maxHealth, this.player.health + 30); this.addScore(250 * this.wave); this.audio.waveClear();
           if (this.waveShots >= 8 && this.waveHits >= this.waveShots) this.earn('marksman');
+          if (this.waveDamage === 0 && this.waveKills > 0) { const b = 250 * this.wave; this.addScore(b); this.hud.kill(`UNTOUCHED  +${b}`); this.hud.popup(p.pos, `+${b}`, true); }
         }
         if (this.waveClearTimer > 3.2) { this.waveClearTimer = 0; this.nextWave(); }
       }
@@ -650,6 +655,7 @@ export class Game {
     const p = this.player;
     if (!p.alive) return;
     if (from) { const l = p.toLocal(from, tv); this.hud.hitFrom(Math.atan2(l.x, l.z)); }
+    this.waveDamage = (this.waveDamage || 0) + dmg;
     this.bestStreak = Math.max(this.bestStreak, this.streak); this.streak = 0; this.note('hit');
     this.regenDelay = 4;
     this.hud.damage(dmg / 25);
