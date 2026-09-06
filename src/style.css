@@ -128,27 +128,44 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: #6ec1ff; fon
 .pip { display: inline-block; width: 14px; height: 14px; border-radius: 2px; background: #8a94a1; box-shadow: inset -3px -3px 0 rgba(0,0,0,0.28), inset 3px 3px 0 rgba(255,255,255,0.35); opacity: 0.32; transition: transform 0.25s var(--spring); }
 .pip.earned { opacity: 1; }
 #medals .pip:hover { transform: scale(1.35) rotate(6deg); }
-/* the debrief: numbers land one after another */
-.card.debrief { padding: 28px 52px 24px; min-width: 400px; }
-.card.debrief .mode { margin: 8px 0 16px; font-size: 12px; font-weight: 800; letter-spacing: 0.25em; text-transform: uppercase; opacity: 0.55; }
-.rows { display: flex; flex-direction: column; gap: 3px; width: 290px; margin: 0 auto 12px; }
-.row { display: flex; align-items: baseline; justify-content: space-between; opacity: 0; }
+/* the debrief: a dark glass panel. The score, then the flight log (the run as a strip: wave segments, kills as
+   ticks up, hits taken as ticks down), then six tiles, landing one after another with their numbers ticking up. */
+.debrief { width: 540px; padding: 30px 44px 26px; color: var(--cream); background: rgba(22,32,46,0.78); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); border: 1px solid rgba(255,246,229,0.14); border-radius: 22px; box-shadow: 0 30px 80px rgba(0,0,0,0.45); text-align: left; }
+.screen:not(.hidden) .debrief { animation: springIn 0.6s cubic-bezier(0.2, 1.5, 0.4, 1) both; }
+.debrief .mode { margin: 0 0 6px; font-size: 10px; font-weight: 800; letter-spacing: 0.32em; text-transform: uppercase; opacity: 0.5; }
+.debrief h1 { margin: 0; font-size: 44px; font-weight: 900; letter-spacing: -0.03em; line-height: 1; color: var(--cream); }
+.debrief h1 span { color: var(--coral); }
+.scoreline { display: flex; align-items: baseline; gap: 12px; margin: 18px 0 0; }
+.scoreline b { font-size: 68px; font-weight: 900; line-height: 1; letter-spacing: -0.04em; color: var(--coral); font-variant-numeric: tabular-nums; }
+.scoreline span { font-size: 10px; font-weight: 800; letter-spacing: 0.32em; text-transform: uppercase; opacity: 0.5; }
+.log { position: relative; height: 30px; margin: 18px 0 18px; border-radius: 5px; overflow: hidden; background: rgba(255,246,229,0.05); transform: scaleX(0); transform-origin: left; }
+.log.in { transition: transform 0.9s cubic-bezier(0.2, 0.8, 0.2, 1); transform: scaleX(1); }
+.log b { position: absolute; top: 0; bottom: 0; padding: 3px 0 0 5px; font-size: 9px; font-weight: 800; letter-spacing: 0.15em; opacity: 0.5; background: rgba(255,246,229,0.05); }
+.log b:nth-child(even) { background: rgba(255,246,229,0.12); }
+.log i { position: absolute; width: 2px; }
+.log i.kill { top: 4px; height: 11px; background: var(--cream); }
+.log i.hit { bottom: 4px; height: 7px; background: var(--coral); opacity: 0.85; }
+.log i.end { top: 9px; height: 12px; width: 6px; margin-left: -4px; background: var(--coral); box-shadow: 0 0 10px var(--coral); }
+.tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px 18px; padding-top: 16px; border-top: 1px solid rgba(255,246,229,0.12); }
+.tile b { display: block; font-size: 24px; font-weight: 900; line-height: 1.1; font-variant-numeric: tabular-nums; letter-spacing: -0.02em; }
+.tile span { display: block; margin-top: 2px; font-size: 9px; font-weight: 800; letter-spacing: 0.24em; text-transform: uppercase; opacity: 0.5; }
+.row { opacity: 0; }
 .row.in { animation: rowIn 0.45s var(--spring) both; }
-.row span { font-size: 12px; font-weight: 800; letter-spacing: 0.14em; text-transform: uppercase; opacity: 0.6; }
-.row b { font-size: 20px; font-weight: 900; font-variant-numeric: tabular-nums; }
-.row.score b { font-size: 28px; color: var(--coral); }
 .row b.land { display: inline-block; animation: bump 0.35s var(--spring); }
-@keyframes rowIn { from { opacity: 0; transform: translateX(-14px); } to { opacity: 1; transform: none; } }
+@keyframes rowIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
 .later { opacity: 0; }
 .later.in { animation: rowIn 0.5s var(--spring) both; }
-#dbmedal { margin: 6px 0 0; font-size: 15px; font-weight: 800; }
-#dbmedal .pip { width: 12px; height: 12px; margin-right: 9px; vertical-align: -1px; }
-#dbmedal em { font-style: normal; font-size: 11px; letter-spacing: 0.22em; color: var(--coral); margin-left: 8px; }
-#dbmedal.next { opacity: 0; } #dbmedal.next.in { opacity: 0.55; }
-#btn-share { margin: 14px 0 6px; padding: 9px 20px; border-radius: 999px; border: 0; background: var(--ink); color: var(--cream); font: inherit; font-weight: 800; font-size: 13px; letter-spacing: 0.12em; text-transform: uppercase; cursor: pointer; box-shadow: 0 4px 0 rgba(0,0,0,0.2); }
-#btn-share:active { transform: translateY(2px); box-shadow: 0 2px 0 rgba(0,0,0,0.2); }
-#btn-share.done { background: var(--coral); }
-.card.debrief .press { margin: 10px 0 0; font-size: 14px; }
+#dbmedal { margin: 18px 0 0; padding-top: 14px; border-top: 1px solid rgba(255,246,229,0.12); font-size: 14px; font-weight: 800; }
+#dbmedal .pip { width: 12px; height: 12px; margin-right: 10px; vertical-align: -1px; }
+#dbmedal em { font-style: normal; font-size: 10px; letter-spacing: 0.24em; color: var(--coral); margin-left: 10px; }
+#dbmedal.next.in { opacity: 0.5; }
+#newbest { margin: 10px 0 0; font-size: 12px; font-weight: 900; letter-spacing: 0.32em; color: var(--sun); }
+.actions { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-top: 18px; }
+#btn-share { padding: 9px 18px; border-radius: 999px; border: 1px solid rgba(255,246,229,0.35); background: transparent; color: var(--cream); font: inherit; font-weight: 800; font-size: 11px; letter-spacing: 0.2em; text-transform: uppercase; cursor: pointer; transition: background 0.2s, border-color 0.2s; }
+#btn-share:hover { background: rgba(255,246,229,0.12); border-color: var(--cream); }
+#btn-share.done { background: var(--coral); border-color: var(--coral); color: #fff; }
+.debrief .press { margin: 0; font-size: 12px; letter-spacing: 0.2em; opacity: 0.85; }
+#gohint:only-child, #btn-share.hidden + #gohint { margin-left: auto; }
 .card.help { max-width: 600px; padding: 32px 44px 28px; }
 .card.help h2 { margin: 0 0 18px; font-size: 30px; font-weight: 900; letter-spacing: -0.01em; }
 .card.help .note { font-size: 14px; line-height: 1.5; opacity: 0.78; margin: 0 0 10px; text-align: left; }
@@ -198,9 +215,13 @@ kbd { display: inline-block; min-width: 26px; padding: 3px 7px; margin: 0 2px; b
   .intro .mobilehint { display: block; }
   .quick > div { display: none; }
   .card { padding: 26px 30px; max-width: 92vw; }
-  .card.debrief { min-width: 0; padding: 20px 26px 18px; }
-  .card.debrief .rows { width: 240px; gap: 1px; }
-  .row b { font-size: 17px; } .row.score b { font-size: 22px; }
+  .debrief { width: 92vw; max-width: 540px; padding: 18px 22px 16px; }
+  .debrief h1 { font-size: 34px; }
+  .scoreline b { font-size: 48px; } .scoreline { margin-top: 10px; }
+  .log { margin: 12px 0; height: 24px; }
+  .tiles { gap: 8px 12px; padding-top: 10px; } .tile b { font-size: 19px; }
+  #dbmedal { margin-top: 12px; padding-top: 10px; font-size: 13px; }
+  .actions { margin-top: 12px; }
   #btn-daily kbd { display: none; }
   .card h1 { font-size: 56px; }
   .card h1.small { font-size: 44px; }

@@ -83,15 +83,23 @@ export function attachDevHooks({ game, input, world, camera, pipeline, renderer,
   const clampN = THREE.MathUtils.clamp;
   const ptv = new THREE.Vector3(), paim = new THREE.Vector3(), pdir = new THREE.Vector3();
   const pilotBrain = new EnemyBrain(game.player, 0.55);   // borrows the bandits' steering maths; the skill sets its agility
+  /** Two scripted pilots. `average` reacts every 0.3 s, fires inside a 4 degree cone. `rookie` is a first-timer: slow to
+   *  react, half the agility, fires at anything inside 7 degrees and aims with a wobble of up to 20 units. */
+  const PILOTS = {
+    average: { react: 0.3, agility: 0.7, cone: 0.07, noise: 0 },
+    rookie: { react: 0.55, agility: 0.5, cone: 0.12, noise: 20 },
+  };
+  let PILOT = PILOTS.average;
   let pTarget = null, pThink = 0;
-  /** Reacts every 0.3 s, turns toward the nearest bandit's lead point, boosts to close, brakes before ramming, fires
-   *  inside a 4 degree cone within 380 units, pulls up off the ground and turns back from the walls. Writes the shared
-   *  Input the way the keyboard would. */
+  const pNoise = new THREE.Vector3();
+  /** Turns toward the nearest bandit's lead point, boosts to close, brakes before ramming, fires inside its cone
+   *  within 380 units, pulls up off the ground and turns back from the walls. Writes the shared Input like a keyboard. */
   const flyAverage = (dt) => {
     const p = game.player, inp = p.input;
     pThink -= dt;
     if (pThink <= 0 || !pTarget || !pTarget.alive) {
-      pThink = 0.3; pTarget = null;
+      pThink = PILOT.react; pTarget = null;
+      pNoise.set(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).multiplyScalar(2 * PILOT.noise);
       let best = Infinity;
       for (const e of game.enemies) { if (!e.ac.alive) continue; const d = e.ac.pos.distanceToSquared(p.pos); if (d < best) { best = d; pTarget = e.ac; } }
     }
@@ -104,18 +112,18 @@ export function attachDevHooks({ game, input, world, camera, pipeline, renderer,
       pilotBrain.steerTo(paim.set(0, 220, 0), 0.7); pitch = inp.pitch; roll = inp.roll; yaw = inp.yaw;
     } else if (pTarget) {
       const dist = p.pos.distanceTo(pTarget.pos);
-      paim.copy(pTarget.pos).addScaledVector(pTarget.velocity, dist / BULLET_SPEED);
-      pilotBrain.steerTo(paim, 0.7);
+      paim.copy(pTarget.pos).addScaledVector(pTarget.velocity, dist / BULLET_SPEED).add(pNoise);
+      pilotBrain.steerTo(paim, PILOT.agility);
       pitch = inp.pitch; roll = inp.roll; yaw = inp.yaw;
       const l = p.toLocal(paim, ptv), off = Math.atan2(Math.hypot(l.x, l.y), l.z);
-      fire = dist < 380 && off < 0.07;
+      fire = dist < 380 && off < PILOT.cone;
       throttle = dist > 240 ? 1 : (dist < 60 && l.z > 0 ? -1 : 0);
     }
     input.pitch = pitch; input.roll = roll; input.yaw = yaw; input.throttle = throttle; input.fire = fire;
   };
   window.__flyAverage = flyAverage;   // for staging: `__flyAverage(1/120); __game.update(1/120)` per step
-  const profileOnce = (wave, seconds, s) => {
-    seed = s; Math.random = seeded;
+  const profileOnce = (wave, seconds, s, pilot) => {
+    seed = s; Math.random = seeded; PILOT = PILOTS[pilot] || PILOTS.average;
     game.medals = new Medals(false);
     const origDamage = Aircraft.prototype.damage, origFire = game.fire;
     const n = { pShots: 0, eShots: 0, pHits: 0, eHits: 0, taken: 0 };
@@ -154,13 +162,13 @@ export function attachDevHooks({ game, input, world, camera, pipeline, renderer,
     }
     if (freeRun > 0) windows.push(freeRun);
     Aircraft.prototype.damage = origDamage; game.fire = origFire;
-    const kills = game.kills, health = game.player.health, died = game.state !== 'playing';
+    const kills = game.kills, health = game.player.health, died = game.state !== 'playing', reached = game.wave, cause = died ? game.deathCause : null, cushionT = game.cushioned;
     game.abort();
     Math.random = realRandom; game.medals = realMedals;
     const f = (x) => +x.toFixed(3);
     const stateFrac = {}; for (const k in states) stateFrac[k] = f(states[k] / (banditT || 1));
     return {
-      wave, seconds: f(t), died, cleared: cleared < 0 ? null : f(cleared), kills, healthLeft: Math.round(health), damageTaken: Math.round(n.taken),
+      wave, waveReached: reached, seconds: f(t), died, cause, cushioned: f(cushionT), cleared: cleared < 0 ? null : f(cleared), kills, healthLeft: Math.round(health), damageTaken: Math.round(n.taken),
       shots: n.pShots, hits: n.pHits, accuracy: f(n.pHits / (n.pShots || 1)), banditShots: n.eShots, banditHits: n.eHits,
       // fractions of the time at least one bandit was alive
       huntedFrac: f(huntedT / (aliveT || 1)),   // a pursuing bandit had its nose on you within 500
@@ -172,9 +180,9 @@ export function attachDevHooks({ game, input, world, camera, pipeline, renderer,
     };
   };
   /** Flies `runs` seeded fights from `wave` with the scripted pilot and averages the measurements (per-run in `runs`). */
-  window.__aiProfile = ({ wave = 1, seconds = 60, runs = 3, seedBase = 4242 } = {}) => {
+  window.__aiProfile = ({ wave = 1, seconds = 60, runs = 3, seedBase = 4242, pilot = 'average' } = {}) => {
     const rs = [];
-    try { for (let r = 0; r < runs; r++) rs.push(profileOnce(wave, seconds, seedBase + r * 7919)); }
+    try { for (let r = 0; r < runs; r++) rs.push(profileOnce(wave, seconds, seedBase + r * 7919, pilot)); }
     finally { Math.random = realRandom; }
     const avg = {};
     for (const k in rs[0]) {

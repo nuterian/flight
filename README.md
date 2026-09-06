@@ -30,6 +30,11 @@ time aloft) with a copy-result button on the daily that puts a one-line score wi
 Medals are earned once and shown as pips on the title: bronze, silver and gold wings for waves 3, 6 and 10, and three
 secret ones for how you fly.
 
+The first waves teach the game. Wave 1 does not shoot back, early bandits are light, slow and fly high, the guns
+help (targets are a little fatter and bullets bend toward a bandit near their line of flight) and a ground cushion
+eases the nose up if your path is about to meet the ground. All of it fades out by wave 7. The curve is tuned with
+scripted pilots in `__aiProfile` (a rookie and an average one), not by feel.
+
 Bandits arrive through a portal each wave and come in bigger packs. They hunt in passes: after a pass, or after
 sitting on your tail for a few seconds, a bandit breaks off and cruises about before coming back, and only part of
 the pack hunts you at once, so there is always one showing you its tail. Quick kills chain into combos. Stay inside

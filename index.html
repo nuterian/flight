@@ -81,22 +81,22 @@
   </div>
 
   <div id="gameover" class="screen hidden">
-    <div class="card debrief">
-      <h1 class="small">SHOT <span>DOWN</span></h1>
+    <div class="debrief">
       <p class="mode" id="dbmode">Free flight</p>
-      <div class="rows" id="dbrows">
-        <div class="row score"><span>Score</span><b>0</b></div>
-        <div class="row"><span>Waves</span><b>0</b></div>
-        <div class="row"><span>Kills</span><b>0</b></div>
-        <div class="row"><span>Accuracy</span><b>0%</b></div>
-        <div class="row"><span>Best combo</span><b>0</b></div>
-        <div class="row"><span>Clean streak</span><b>0 s</b></div>
-        <div class="row"><span>Time aloft</span><b>0:00</b></div>
+      <h1>SHOT <span>DOWN</span></h1>
+      <div class="scoreline row"><b>0</b><span>points</span></div>
+      <div id="dblog" class="log" aria-label="Flight log"></div>
+      <div class="tiles" id="dbtiles">
+        <div class="tile row"><b>0</b><span>waves</span></div>
+        <div class="tile row"><b>0</b><span>kills</span></div>
+        <div class="tile row"><b>0%</b><span>accuracy</span></div>
+        <div class="tile row"><b>0</b><span>best combo</span></div>
+        <div class="tile row"><b>0 s</b><span>clean streak</span></div>
+        <div class="tile row"><b>0:00</b><span>aloft</span></div>
       </div>
       <p id="dbmedal" class="later"><i></i><span></span><em></em></p>
-      <p id="newbest" class="later">NEW BEST!</p>
-      <button id="btn-share" class="later">Copy result</button>
-      <p class="press later" id="gohint">PRESS ENTER TO FLY AGAIN</p>
+      <p id="newbest" class="later">NEW BEST</p>
+      <div class="actions"><button id="btn-share" class="later">Copy result</button><p class="press later" id="gohint">PRESS ENTER TO FLY AGAIN</p></div>
     </div>
   </div>
 

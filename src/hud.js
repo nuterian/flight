@@ -12,7 +12,7 @@ export class Hud {
       hud: $('hud'), score: $('score'), wave: $('wave'), enemies: $('enemies'), health: $('health'), speed: $('speed'),
       crosshair: $('crosshair'), lead: $('leadret'), markers: $('markers'), banner: $('banner'), warning: $('warning'),
       vignette: $('vignette'), title: $('title'), gameover: $('gameover'), best: $('best'), newbest: $('newbest'), touch: $('touch'),
-      dbmode: $('dbmode'), dbrows: $('dbrows'), dbmedal: $('dbmedal'), share: $('btn-share'), gohint: $('gohint'), medals: $('medals'), dailyinfo: $('dailyinfo'),
+      dbmode: $('dbmode'), dbscore: document.querySelector('#gameover .scoreline'), dbtiles: $('dbtiles'), dblog: $('dblog'), dbmedal: $('dbmedal'), share: $('btn-share'), gohint: $('gohint'), medals: $('medals'), dailyinfo: $('dailyinfo'),
       healthwrap: $('healthwrap'), killfeed: $('killfeed'), combo: $('combo'), mute: $('mute'), pips: $('pips'), speedbar: $('speedbar'), btnMute: $('btn-mute'),
     };
     this.pipCount = 0;
@@ -184,19 +184,32 @@ export class Hud {
   }
 
   /**
-   * The debrief: rows land one after another and their numbers tick up from zero (the score's own pattern), then
-   * the medal line, the new-best flag, the share button and the prompt. `tickDebrief` drives it per frame.
+   * The debrief: the score lands first and ticks up (the HUD score's own pattern), the flight log draws across,
+   * then the six tiles land one after another, then the medal line, the new-best flag, the share button and the
+   * prompt. `tickDebrief` drives it per frame. `log` is the run's events ({ t, k: 'wave' | 'kill' | 'hit', n }).
    */
-  showDebrief({ mode, score, waves, kills, accuracy, bestCombo, streak, aloft, medal, next, isBest, share }) {
+  showDebrief({ mode, score, waves, kills, accuracy, bestCombo, streak, aloft, medal, next, isBest, share, log = [] }) {
     this.el.dbmode.textContent = mode;
-    const rows = [...this.el.dbrows.children];
+    const rows = [this.el.dbscore, ...this.el.dbtiles.children];
     const fmt = {
-      int: (v) => String(Math.round(v)), pct: (v) => `${Math.round(v)}%`, secs: (v) => `${v.toFixed(1)} s`,
+      int: (v) => String(Math.round(v)), pct: (v) => `${Math.round(v)}%`, secs: (v) => `${v.toFixed(1)} s`, combo: (v) => `x${Math.round(v)}`,
       time: (v) => `${Math.floor(v / 60)}:${String(Math.floor(v % 60)).padStart(2, '0')}`,
     };
-    const spec = [[score, 'int'], [waves, 'int'], [kills, 'int'], [accuracy, 'pct'], [bestCombo, 'int'], [streak, 'secs'], [aloft, 'time']];
-    const items = spec.map(([target, f], i) => ({ el: rows[i], val: rows[i].lastChild, target, shown: 0, f: fmt[f], at: 0.35 + i * 0.22, landed: false }));
+    const spec = [[score, 'int'], [waves, 'int'], [kills, 'int'], [accuracy, 'pct'], [bestCombo, 'combo'], [streak, 'secs'], [aloft, 'time']];
+    const items = spec.map(([target, f], i) => ({ el: rows[i], val: rows[i].firstChild, target, shown: 0, f: fmt[f], at: (i === 0 ? 0.3 : 1.2) + i * 0.16, landed: false }));
     for (const it of items) { it.el.classList.remove('in'); it.val.classList.remove('land'); it.val.textContent = it.f(0); }
+    // the flight log: wave segments across the run's length, a tick up per kill, a tick down per hit taken, the end
+    const lg = this.el.dblog, total = Math.max(1, aloft), pct = (t) => `${Math.min(100, t / total * 100).toFixed(2)}%`;
+    lg.classList.remove('in');
+    const parts = [];
+    const waveStarts = log.filter((e) => e.k === 'wave');
+    waveStarts.forEach((w, i) => {
+      const from = w.t, to = i + 1 < waveStarts.length ? waveStarts[i + 1].t : aloft;
+      parts.push(`<b style="left:${pct(from)};width:${pct(Math.max(0, to - from))}">${w.n}</b>`);
+    });
+    for (const e of log) if (e.k === 'kill' || e.k === 'hit') parts.push(`<i class="${e.k}" style="left:${pct(e.t)}"></i>`);
+    parts.push(`<i class="end" style="left:${pct(aloft)}"></i>`);
+    lg.innerHTML = parts.join('');
     const m = this.el.dbmedal, pip = m.firstChild, name = m.children[1], tag = m.lastChild;
     const shown = medal || next;
     m.classList.toggle('next', !medal);
@@ -211,7 +224,7 @@ export class Hud {
     this.el.share.classList.remove('done'); this.el.share.textContent = 'Copy result';
     this.shareText = share;
     const last = items[items.length - 1].at;
-    const later = [[m, last + 0.35], [this.el.newbest, last + 0.55], [this.el.share, last + 0.7], [this.el.gohint, last + 0.85]];
+    const later = [[lg, 0.7], [m, last + 0.3], [this.el.newbest, last + 0.45], [this.el.share, last + 0.6], [this.el.gohint, last + 0.7]];
     for (const [el] of later) el.classList.remove('in');
     this.debrief = { t: 0, items, later };
     this.showScreen('gameover');

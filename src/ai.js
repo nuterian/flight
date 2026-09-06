@@ -25,6 +25,7 @@ export class EnemyBrain {
     this.patience = this.rollPatience();
     this.tailPatience = this.rollTailPatience();
     this.leash = 300 + skill * 220;    // beyond this, a bandit that has lost you behind it gives up for a while
+    this.floor = 40 + (1 - skill) * 40; // rookies keep well clear of the ground, so chasing them does not lead you into it
     this.evadeRoll = 1; this.evadePitch = 0.8;
     this.wander = new THREE.Vector3();
     this.wanderTimer = 0;
@@ -53,7 +54,7 @@ export class EnemyBrain {
     g.set(player.pos.x + Math.sin(bearing) * r, 0, player.pos.z + Math.cos(bearing) * r);
     const lim = BOUNDS.half - 220;
     g.x = clamp(g.x, -lim, lim); g.z = clamp(g.z, -lim, lim);
-    g.y = clamp(player.pos.y + rnd(-50, 70), groundAt(g.x, g.z) + 80, BOUNDS.ceiling - 150);
+    g.y = clamp(player.pos.y + rnd(-50, 70), groundAt(g.x, g.z) + this.floor * 2, BOUNDS.ceiling - 150);
     this.goalTimer = rnd(2.2, 3.6);
   }
 
@@ -74,7 +75,7 @@ export class EnemyBrain {
     this.timer -= dt; this.wanderTimer -= dt; this.checkTimer -= dt;
     if (this.wanderTimer <= 0) {
       this.wanderTimer = rnd(0.6, 1.4);
-      const w = (1 - this.skill) * 28;
+      const w = (1 - this.skill) * 10;   // sloppy flying, but not a target that jinks at random
       this.wander.set(rnd(-w, w), rnd(-w, w), rnd(-w, w));
     }
 
@@ -82,7 +83,7 @@ export class EnemyBrain {
     ahead.copy(ac.pos).addScaledVector(ac.forward, 90);
     const groundHere = groundAt(ac.pos.x, ac.pos.z);
     const groundAhead = Math.max(groundAt(ahead.x, ahead.z), groundAt(ac.pos.x + ac.forward.x * 45, ac.pos.z + ac.forward.z * 45));
-    if (ac.pos.y - groundHere < 40 || ahead.y - groundAhead < 30) {
+    if (ac.pos.y - groundHere < this.floor || ahead.y - groundAhead < this.floor * 0.75) {
       inp.pitch = 1; inp.roll = clamp(ac.right.y * 3, -1, 1); inp.yaw = 0; inp.throttle = 1; this.wantsFire = false;
       return;
     }
@@ -100,7 +101,7 @@ export class EnemyBrain {
       this.engaged += dt;
       this.tailing = dist < 130 && toPlayer.z > 0 ? this.tailing + dt : 0;
       if (!player.alive) { this.state = 'patrol'; this.timer = 2; }
-      else if (dist < 42 && toPlayer.z > 0) this.breakaway('wander');                                  // the pass
+      else if (dist < 60 && toPlayer.z > 0) this.breakaway('wander');                                  // the pass: break before a collision
       else if (this.tailing > this.tailPatience) this.breakaway('wander');                            // sat on you long enough
       else if (this.engaged > this.patience) { if (dist < 160) this.breakaway('wander'); else this.startWander(player); }
       else if (dist > this.leash && playerBehind && this.engaged > 1) this.startWander(player);      // lost you: give up for now
@@ -139,7 +140,7 @@ export class EnemyBrain {
       if (dist < 420 && off < 0.11 + (1 - this.skill) * 0.05) {
         this.fireGap -= dt;
         if (this.fireBurst > 0) { this.fireBurst -= dt; this.wantsFire = true; }
-        else if (this.fireGap <= 0) { this.fireBurst = rnd(0.35, 0.8) * (0.6 + this.skill); this.fireGap = rnd(0.8, 1.8) * (1.6 - this.skill); }
+        else if (this.fireGap <= 0) { this.fireBurst = rnd(0.35, 0.8) * (0.6 + this.skill); this.fireGap = rnd(0.8, 1.8) * (1.6 - this.skill) * (this.skill < 0.5 ? 1.6 : 1); }
       } else { this.fireBurst = 0; }
     } else if (this.state === 'wander') {
       // an easy cruise between loose waypoints: predictable, catchable, and not looking for you

@@ -36,6 +36,7 @@ export class Game {
     this.trails = new Trails(scene, (MAX_ENEMIES + 1) * 2);
 
     this.pack = { hunting: 0, max: 1 };   // how many bandits are hunting the player right now, and how many may
+    this.assist = { radius: 0, turn: 0, cone: 0.08, range: 380 };   // aim help for the player's guns, generous early
     this.medals = new Medals();
     this.daily = false; this.rng = Math.random;   // the daily flight swaps in a seeded generator for the run's layout
     this.player = new Aircraft(new Plane(batches, SCHEMES.player), PLAYER_STATS, 0);
@@ -71,7 +72,7 @@ export class Game {
     // the debrief's numbers and the medal checks
     this.shots = 0; this.hits = 0; this.bestCombo = 0; this.streak = 0; this.bestStreak = 0; this.aloft = 0;
     this.waveShots = 0; this.waveHits = 0; this.loopAcc = 0; this.loopT = 0; this.loopUp = false; this.loopDown = false;
-    this.runMedals = []; this.newMedals = [];
+    this.runMedals = []; this.newMedals = []; this.log = []; this.cushioned = 0;
     if (this.portal) this.portal.hide();
     if (this.hud) this.hud.resetScore();
     if (this.world) this.world.setDanger(0);
@@ -120,6 +121,12 @@ export class Game {
     }
     this.waveSize = count;
     this.waveShots = 0; this.waveHits = 0;
+    this.note('wave', this.wave);
+    // The learning curve: the first waves are target practice. Bandits are light and slow, do not shoot back on
+    // wave 1, and the guns help: targets are fatter and bullets bend toward a bandit near their line of flight.
+    // All of it fades out by wave 7, after which it is your aim alone.
+    const learn = this.learn = clamp(1 - (this.wave - 1) / 6, 0, 1);
+    this.assist.radius = 1 + 3 * learn; this.assist.turn = 0.25 + 0.75 * learn;
     for (const m of MEDALS) if (m.wave && this.wave >= m.wave) this.earn(m.id);
     // Only part of the pack hunts you at once (1 on the first waves, one more every three); the rest cruise about
     // until a slot frees, so there is always a bandit showing you its tail and never a whole wave on yours.
@@ -140,9 +147,9 @@ export class Game {
     for (let i = 0; i < count; i++) {
       const e = this.enemies[i];
       const ac = e.ac;
-      ac.maxHealth = 34 + this.wave * 7; ac.health = ac.maxHealth;
-      ac.stats.maxSpeed = ENEMY_STATS.maxSpeed + this.wave * 2;
-      ac.stats.cruise = ENEMY_STATS.cruise + this.wave;
+      ac.maxHealth = 24 + this.wave * 6; ac.health = ac.maxHealth;   // 3 hits on wave 1, 6 by wave 6, 8 by wave 10
+      ac.stats.maxSpeed = ENEMY_STATS.maxSpeed - 12 + this.wave * 3;
+      ac.stats.cruise = ENEMY_STATS.cruise - 8 + this.wave * 2;
       e.brain = new EnemyBrain(ac, skill);
       e.pending = 1.2 + i * 0.3;
     }
@@ -268,7 +275,7 @@ export class Game {
 
   /** A shot-down bandit: quick successive kills chain into a combo that multiplies the score. */
   registerKill(label, base) {
-    this.kills++;
+    this.kills++; this.note('kill');
     this.combo = this.comboTimer > 0 ? this.combo + 1 : 1;
     this.bestCombo = Math.max(this.bestCombo, this.combo);
     this.comboTimer = 2.5;
@@ -285,6 +292,9 @@ export class Game {
     const near = clamp(1 - pos.distanceTo(this.player.pos) / 240, 0, 1);
     this.effects.shake = Math.max(this.effects.shake, base + near * 0.9);
   }
+
+  /** One entry in the run's flight log (drawn on the debrief): a wave start, a kill, or a hit taken. */
+  note(k, n) { if (this.log.length < 600) this.log.push({ t: this.aloft, k, n }); }
 
   /** A medal's condition was met. The first time ever it is kept, named in the feed and chimed; every time it counts
    *  for this run's debrief line. */
@@ -335,15 +345,29 @@ export class Game {
         p.health -= (p.maxHealth / BOUNDS.grace) * dt;
         p.hitFlash = 0.1;
         hud.flash = Math.max(hud.flash, 0.55 + Math.sin(this.time * 8) * 0.25);
-        if (left <= 0 || p.health <= 0) { p.health = 0; this.playerDied(false); }
+        if (left <= 0 || p.health <= 0) { p.health = 0; this.playerDied(false, 'zone'); }
       } else {
         this.outsideTimer = Math.max(0, this.outsideTimer - dt * 2.5);   // countdown recovers quickly once back inside
       }
       this.outside = outside;
       if (this.world) this.world.setDanger(outside ? 1 : Math.min(1, this.outsideTimer / 2));
-      const groundUnder = groundAt(p.pos.x, p.pos.z);
-      if (!outside && p.pos.y - groundUnder < 22 && p.forward.y < 0) warning = 'PULL UP';
+      const groundUnder = groundAt(p.pos.x, p.pos.z), alt = p.pos.y - groundUnder;
+      if (!outside && alt < 22 && p.forward.y < 0) warning = 'PULL UP';
       hud.warn(warning);
+      // the ground cushion of the first waves: if the flight path over the next 160 units meets the ground (a dive,
+      // or a cliff face ahead), the nose is eased up for you, harder the deeper it would go, and when it is bad the
+      // wings are levelled and the brake comes on so the plane can actually turn. Level skimming over flat ground is
+      // untouched; it fades out by wave 7.
+      if (this.learn > 0 && p.speed > 1) {
+        let pred = alt;
+        for (const d of [40, 80, 120, 160]) { const s = d / p.speed; pred = Math.min(pred, p.pos.y + p.velocity.y * s - groundAt(p.pos.x + p.velocity.x * s, p.pos.z + p.velocity.z * s)); }
+        if (pred < 12) {
+          const k = this.learn * clamp((12 - pred) / 20, 0, 1);
+          p.input.pitch = Math.max(p.input.pitch, k);
+          if (k > 0.5) { p.input.throttle = Math.min(p.input.throttle, -k); p.input.roll += (clamp(p.right.y * 3, -1, 1) - p.input.roll) * k; }
+          this.cushioned += dt;
+        }
+      }
       p.lookTarget = this.nearestEnemy(400);
       p.update(dt);
       this.shedTip(p);
@@ -358,7 +382,7 @@ export class Game {
         if (p.forward.y < -0.88) this.loopDown = true;
         if (Math.abs(this.loopAcc) > TWO_PI * 0.92 && this.loopUp && this.loopDown) { this.earn('loop'); this.loopAcc = 0; this.loopT = 0; this.loopUp = this.loopDown = false; }
       }
-      if (p.pos.y < groundAt(p.pos.x, p.pos.z) + 2.2) this.playerDied(isWaterAt(p.pos.x, p.pos.z));
+      if (p.pos.y < groundAt(p.pos.x, p.pos.z) + 2.2) this.playerDied(isWaterAt(p.pos.x, p.pos.z), 'terrain');
       this.regenDelay -= dt;
       if (this.regenDelay <= 0 && p.health < p.maxHealth) p.health = Math.min(p.maxHealth, p.health + 3 * dt);
     }
@@ -383,14 +407,14 @@ export class Game {
         e.far = ac.pos.distanceToSquared(p.pos) > 1100 * 1100 ? (e.far || 0) + dt : 0;
         if (e.far > 35) { this.recallStraggler(e); continue; }
       }
-      if (e.brain.wantsFire && p.alive) this.fire(ac, this.enemyBullets, 4.5 + this.wave * 0.5, 0.02 + (1 - e.brain.skill) * 0.03, 8);
+      if (e.brain.wantsFire && p.alive && this.wave > 1) this.fire(ac, this.enemyBullets, 4 + this.wave * 0.5, 0.02 + (1 - e.brain.skill) * 0.03, 8);
       if (ac.pos.y < groundAt(ac.pos.x, ac.pos.z) + 2) {
         this.killAircraft(ac, 0.8); this.registerKill('BANDIT CRASHED', 40); if (isWaterAt(ac.pos.x, ac.pos.z)) this.effects.splash(ac.pos);
         continue;
       }
       if (p.alive && ac.pos.distanceToSquared(p.pos) < 64) {
         this.killAircraft(ac, 1); this.registerKill('RAMMED', 60);
-        this.hurtPlayer(35);
+        this.hurtPlayer(20);
       }
       this.smokeTrail(ac, dt);
     }
@@ -412,7 +436,7 @@ export class Game {
         } else this.hitStop = 0.05;
       }
       else this.addScore(2);
-    }, (pt, water) => this.effects.groundHit(pt, water));
+    }, (pt, water) => this.effects.groundHit(pt, water), this.assist);
     this.enemyBullets.update(dt, p.alive ? [p] : [], (t, point, dmg) => { this.effects.hitSpark(point); this.hurtPlayer(dmg); }, (pt, water) => this.effects.groundHit(pt, water));
 
     // ---- waves
@@ -471,18 +495,19 @@ export class Game {
   hurtPlayer(dmg) {
     const p = this.player;
     if (!p.alive) return;
-    this.bestStreak = Math.max(this.bestStreak, this.streak); this.streak = 0;
+    this.bestStreak = Math.max(this.bestStreak, this.streak); this.streak = 0; this.note('hit');
     this.regenDelay = 4;
     this.hud.damage(dmg / 25);
     this.hud.hit();
     this.audio.hit(0);
     this.effects.shake = Math.max(this.effects.shake, 0.5);
-    if (p.damage(dmg)) this.playerDied(false);
+    if (p.damage(dmg)) this.playerDied(false, 'shot');
   }
 
-  playerDied(water) {
+  playerDied(water, cause = 'shot') {
     const p = this.player;
     if (this.state !== 'playing') return;
+    this.deathCause = water ? 'sea' : cause;
     p.alive = false; p.hide(); p.health = 0;
     for (const t of p.trails) this.trails.reset(t);
     this.effects.explosion(p.pos, [p.plane.scheme.body, p.plane.scheme.accent, 0x333333], 1.4);
@@ -523,7 +548,7 @@ export class Game {
     this.hud.showDebrief({
       mode: this.daily ? `Today's flight · ${todayLabel()}` : 'Free flight',
       score: this.score, waves: this.wave, kills: this.kills, accuracy: this.shots ? this.hits / this.shots * 100 : 0,
-      bestCombo: this.bestCombo, streak: this.bestStreak, aloft: this.aloft, medal, next, isBest, share,
+      bestCombo: this.bestCombo, streak: this.bestStreak, aloft: this.aloft, medal, next, isBest, share, log: this.log,
     });
   }
 
