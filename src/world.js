@@ -1,7 +1,7 @@
 import * as THREE from 'three/webgpu';
 import {
   color, positionLocal, positionWorld, normalize, mix, smoothstep, dot, float, vec2, vec3, attribute, time, sin, cos,
-  saturate, pow, uniform, fog, rangeFogFactor, instanceIndex, hash, cameraPosition, reflect, transformNormalToView, mx_noise_float, reflector, uv, abs, fract, max as tslMax, min as tslMin, length, exp, floor, select, normalWorld, vertexColor, step, dot as tslDot, luminance, positionView,
+  saturate, pow, uniform, fog, rangeFogFactor, instanceIndex, hash, cameraPosition, reflect, transformNormalToView, mx_noise_float, reflector, uv, abs, fract, max as tslMax, min as tslMin, length, exp, floor, select, normalWorld, vertexColor, step, dot as tslDot, luminance, positionView, texture, Fn,
 } from 'three/tsl';
 import { ensureGrid, heightAt, levelAtCell, cellKind, cellWater, cellTop, levelTop, waterfalls, isSeaAt, KIND, N as HALF_CELLS, CELL, BOUNDS } from './terrain.js';
 import { Boxes, local, softParam, STRIP } from './boxes.js';
@@ -57,6 +57,59 @@ function wallColor(kind, out) {
   if (kind === KIND.ROCK) return out.copy(WALL.rock);
   if (kind === KIND.SNOW) return out.copy(WALL.snow);
   return out.copy(WALL.stone);
+}
+
+// ---------------------------------------------------------------- baked light: ambient occlusion and far sun shadows
+// The sun is fixed for a run and the terrain never moves, so two things are baked once into one texture over the
+// grid, and read per pixel by world position (the greedy-merged mesh has no vertices where they would be needed):
+//  R    sky visibility: how much of the sky a cell sees, from the horizon angle in eight directions (ambient occlusion
+//       for the terraces, creases and valley floors)
+//  GBA  sun occlusion for morning, noon and golden hour: whether higher ground toward the sun blocks it, marched on a
+//       half-resolution grid. Beyond the reach of the real shadow map this is what shades the far hills and valleys.
+const bake = { tex: null, sel: uniform(new THREE.Vector3(0, 1, 0)) };
+function bakeOcclusion() {
+  const t0 = performance.now();
+  const N = HALF_CELLS, W = 2 * N + 2, size = W * W;
+  const top = new Float32Array(size);
+  for (let i = -N - 1; i <= N; i++) for (let j = -N - 1; j <= N; j++) top[(i + N + 1) * W + (j + N + 1)] = cellTop(i, j);
+  const at = (a, b) => top[Math.min(W - 1, Math.max(0, a)) * W + Math.min(W - 1, Math.max(0, b))];
+  const data = new Uint8Array(size * 4);
+  const DIRS = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]], STEPS = [1, 2, 3, 5, 8, 12];
+  for (let a = 0; a < W; a++) for (let b = 0; b < W; b++) {
+    const h = top[a * W + b];
+    let occ = 0;
+    for (const [da, db] of DIRS) {
+      let best = 0;
+      for (const s of STEPS) { const ang = Math.atan2(at(a + da * s, b + db * s) - h, s * CELL * (da && db ? 1.414 : 1)); if (ang > best) best = ang; }
+      occ += Math.min(1, best / (Math.PI * 0.5));
+    }
+    occ /= DIRS.length;
+    data[(a * W + b) * 4] = Math.round(255 * (1 - 0.8 * Math.pow(occ, 1.1)));
+  }
+  // sun occlusion on every other cell, copied into its 2x2 block; linear filtering softens the edges
+  const presets = ['morning', 'noon', 'golden'];
+  presets.forEach((name, k) => {
+    const d = TIMES[name].dir, hl = Math.hypot(d[0], d[2]), ux = d[0] / hl, uz = d[2] / hl, slope = d[1] / hl;
+    for (let a = 0; a < W; a += 2) for (let b = 0; b < W; b += 2) {
+      const h = top[a * W + b];
+      let lit = 255;
+      for (let s = 1; s <= 64; s += s < 16 ? 1 : 2) {
+        const hh = at(Math.round(a + ux * s), Math.round(b + uz * s));   // grid a runs along x, b along z
+        if (hh > h + s * CELL * slope + 0.6) { lit = 0; break; }
+      }
+      for (let da = 0; da < 2; da++) for (let db = 0; db < 2; db++) { const aa = Math.min(W - 1, a + da), bb = Math.min(W - 1, b + db); data[(aa * W + bb) * 4 + 1 + k] = lit; }
+    }
+  });
+  const tex = new THREE.DataTexture(data, W, W, THREE.RGBAFormat);
+  tex.magFilter = tex.minFilter = THREE.LinearFilter; tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping; tex.needsUpdate = true;
+  bake.tex = tex;
+  console.info(`baked occlusion: ${W}x${W} in ${Math.round(performance.now() - t0)} ms`);
+}
+/** The bake sampled at this pixel's world position. */
+function bakeSample() {
+  const N = HALF_CELLS, W = 2 * N + 2;
+  const u = positionWorld.z.div(CELL).add(N + 1.5).div(W), v = positionWorld.x.div(CELL).add(N + 1.5).div(W);
+  return texture(bake.tex, vec2(u, v));
 }
 
 // ---------------------------------------------------------------- terrain (voxel columns, greedy-merged)
@@ -170,7 +223,16 @@ function buildTerrain() {
   geo.setAttribute('lip', new THREE.Float32BufferAttribute(lip, 1));
   geo.setAttribute('topcol', new THREE.Float32BufferAttribute(topcol, 3));
   const mat = new THREE.MeshStandardNodeMaterial({ roughness: 0.95 });
-  mat.colorNode = terrainColor();
+  bakeOcclusion();
+  const baked = bakeSample();
+  // ambient occlusion from the bake on the indirect light, plus a touch on the albedo so creases read in full sun
+  mat.aoNode = baked.r;
+  mat.colorNode = terrainColor().mul(baked.r.mul(0.25).add(0.75));
+  // the far hills: the real shadow map reaches a few hundred units; beyond it the baked sun mask takes over
+  const camDist = cameraPosition.sub(positionWorld).length();
+  const far = smoothstep(float(320), float(540), camDist);
+  const sunLit = float(1).sub(float(1).sub(tslDot(baked.gba, bake.sel)).mul(0.9));
+  mat.receivedShadowNode = Fn(([sh]) => sh.mul(mix(float(1), sunLit, far)));
   const mesh = new THREE.Mesh(geo, mat);
   mesh.receiveShadow = true;
   mesh.castShadow = true;
@@ -859,9 +921,9 @@ export function createWorld(scene, { mobile, lit, glow, soft }) {
   const shadowFocus = new THREE.Vector3(), sunM = new THREE.Matrix4(), sunQ = new THREE.Quaternion(), sunS = new THREE.Vector3(150, 150, 150), sunP = new THREE.Vector3(), sunE = new THREE.Euler();
   let sunSpin = 0, frameNo = 0;
   let timeOfDay = 'noon';
-  // The shadow map is redrawn every `shadowEvery` frames: the sun is fixed and the terrain never moves, so only
-  // the planes' shadows lag, by a frame at most. 1 redraws every frame.
-  const shadow = { every: 2 };
+  // The shadow map can be redrawn every `shadow.every` frames; anything above 1 makes the planes' own shadows
+  // stutter against them, so it stays at 1 on desktop.
+  const shadow = { every: 1 };
   /** Swings the sun and retints the light, sky and fog for one of TIMES. The water is not touched: it only
    *  receives the new light like everything else. */
   const setTimeOfDay = (name) => {
@@ -875,6 +937,7 @@ export function createWorld(scene, { mobile, lit, glow, soft }) {
     hemi.color.set(T.hemi[0]); hemi.groundColor.set(T.hemi[1]); hemi.intensity = T.hemi[2];
     tod.skyTop.value.set(T.skyTop); tod.skyMid.value.set(T.skyMid); tod.horizon.value.set(T.horizon); tod.glow.value.set(T.glow); tod.fog.value.set(T.fog);
     glow.color(sunSlot, T.disc);
+    bake.sel.value.set(name === 'morning' ? 1 : 0, name === 'noon' ? 1 : 0, name === 'golden' ? 1 : 0);
   };
   // Motion smear for the post pass: how far the camera turned (yaw, pitch, roll) and moved (in its own frame) since
   // the last displayed frame. The rotation smears everything equally; the translation is divided by each pixel's
