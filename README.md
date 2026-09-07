@@ -85,8 +85,8 @@ note is generated in code.
   the time you are hunted, tailed, or have a shot.
 - **Feel.** Fixed 120 Hz simulation, hit-stop and distance-scaled shake, a camera that lags through hard turns and
   kicks with the guns, a slow-motion orbit on the last kill of a wave, wreckage that tumbles and smokes, damage
-  states, sea spray and dust on low passes, birds, gulls, sheep, wolves, villagers, and a title built from riveted
-  steel blocks.
+  states, sea spray and dust on low passes, birds, gulls, sheep, wolves, villagers, and a title built from riveted red plates
+  in the plane's own livery.
 - **Sound.** Procedural Web Audio: engine pitched to speed, wind that roughens under g, a low rush of air when
   the ground or a cliff is close, the engines of the nearest bandits following them round you with Doppler and
   stereo, a whoosh when anything big goes past (a bandit, the airship, the portal, a balloon, a landmark, a palm

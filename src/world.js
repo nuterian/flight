@@ -1,7 +1,7 @@
 import * as THREE from 'three/webgpu';
 import {
   color, positionLocal, positionWorld, normalize, mix, smoothstep, dot, float, vec2, vec3, attribute, time, sin, cos,
-  saturate, pow, uniform, fog, rangeFogFactor, instanceIndex, hash, cameraPosition, reflect, transformNormalToView, mx_noise_float, reflector, uv, abs, fract, max as tslMax, min as tslMin, length, exp, floor, select, normalWorld, vertexColor, step, dot as tslDot, luminance, positionView, texture, Fn,
+  saturate, pow, uniform, fog, rangeFogFactor, instanceIndex, hash, cameraPosition, reflect, transformNormalToView, mx_noise_float, reflector, uv, abs, fract, mod, max as tslMax, min as tslMin, length, exp, floor, select, normalWorld, vertexColor, step, dot as tslDot, luminance, positionView, texture, Fn,
 } from 'three/tsl';
 import { ensureGrid, heightAt, levelAtCell, cellKind, cellWater, cellTop, levelTop, isSeaAt, KIND, N as HALF_CELLS, CELL, BOUNDS, SCALE } from './terrain.js';
 import { Boxes, local } from './boxes.js';
@@ -532,7 +532,7 @@ function cloudShape() {
 }
 
 function buildClouds() {
-  const CS = 18, TH = 7;
+  const CS = 18, TH = 7, R = 2400 * SCALE;
   const clouds = [];
   let total = 0;
   for (let i = 0; i < 44; i++) {
@@ -541,28 +541,26 @@ function buildClouds() {
     total += cells.length;
   }
   const geo = new THREE.BoxGeometry(CS, TH, CS);
+  // Each box carries its cloud's starting x and drift speed, and drifts in the vertex shader the way the palm fronds
+  // sway: the cloud slides along x with time and wraps at the map's edge, and nothing on the CPU touches it again.
+  const drift = new THREE.InstancedBufferAttribute(new Float32Array(total * 2), 2);
+  geo.setAttribute('drift', drift);
   // A touch of emissive fakes sky bounce so the undersides stay bright and creamy instead of muddy.
   const mat = new THREE.MeshStandardNodeMaterial({ color: PALETTE.cloud, roughness: 1, emissive: 0xe6eef8, emissiveIntensity: 0.36 });
+  const d = attribute('drift', 'vec2');
+  const x = mod(d.x.add(time.mul(d.y)).add(R), 2 * R).sub(R);   // where the cloud is now; positionLocal is already instance-transformed
+  mat.positionNode = positionLocal.add(vec3(x.sub(d.x), 0, 0));
   const mesh = new THREE.InstancedMesh(geo, mat, total);
   mesh.castShadow = true;
   mesh.frustumCulled = false;
   const m = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Vector3(), p = new THREE.Vector3();
-  const update = (dt) => {
-    let i = 0;
-    for (const c of clouds) {
-      c.x += c.vx * dt;
-      if (c.x > 2400 * SCALE) c.x = -2400 * SCALE;
-      s.setScalar(c.scale);
-      for (const [cx, cz] of c.cells) {
-        p.set(c.x + cx * CS * c.scale, c.y, c.z + cz * CS * c.scale);
-        m.compose(p, q, s);
-        mesh.setMatrixAt(i++, m);
-      }
-    }
-    mesh.instanceMatrix.needsUpdate = true;
-  };
-  update(0);
-  return { mesh, update, clouds };
+  let i = 0;
+  for (const c of clouds) {
+    s.setScalar(c.scale);
+    for (const [cx, cz] of c.cells) { mesh.setMatrixAt(i, m.compose(p.set(c.x + cx * CS * c.scale, c.y, c.z + cz * CS * c.scale), q, s)); drift.setXY(i++, c.x, c.vx); }
+  }
+  mesh.instanceMatrix.needsUpdate = true;
+  return mesh;
 }
 
 // ---------------------------------------------------------------- props
@@ -913,8 +911,8 @@ export function createWorld(scene, { mobile, lit, glow, soft, camera }) {
   const bounds = buildBounds();
   // things you can fly close past: the game sounds a rush of air for each, judged by its x, y, z and radius r
   const obstacles = [...landmarks.obstacles, ...props.balloons];
-  scene.add(terrain, seafloor, water.near, water.far, fresh, sky, clouds.mesh, bounds.mesh);
-  for (const o of [terrain, sky, clouds.mesh, lit.mesh, glow.mesh, props.leaves]) o.layers.enable(MIRROR_LAYER);
+  scene.add(terrain, seafloor, water.near, water.far, fresh, sky, clouds, bounds.mesh);
+  for (const o of [terrain, sky, clouds, lit.mesh, glow.mesh, props.leaves]) o.layers.enable(MIRROR_LAYER);
 
   // Where the sun sits on screen, for the sun shafts: strength fades as it leaves the frame and is 0 behind us.
   const sunScreen = { uv: uniform(new THREE.Vector2(0.5, 0.5)), strength: uniform(0) };
@@ -945,7 +943,6 @@ export function createWorld(scene, { mobile, lit, glow, soft, camera }) {
   const lightRight = new THREE.Vector3().crossVectors(new THREE.Vector3(0, 1, 0), SUN_DIR).normalize();
   const lightUp = new THREE.Vector3().crossVectors(SUN_DIR, lightRight).normalize();
   const update = (dt, t, focus, camera, speed = 0) => {
-    clouds.update(dt);
     props.update(dt, t, focus, speed);
     landmarks.animate(dt);
     sky.position.copy(camera.position);

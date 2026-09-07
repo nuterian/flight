@@ -1,9 +1,10 @@
-// The title, built out of the world's own blocks as riveted steel: light brushed plates on the face with dark seams
-// between them, darker steel for the depth, a bolt head at every plate corner and the odd rust-stained plate.
-// Lit and shadowed by the sun like everything else, dropping into place letter by letter and then floating, always
-// turned to face the camera.
+// The title, built out of the world's own blocks in the player's livery: red plates on the face, brighter toward
+// the top as if lit by the sky, cream for the depth showing as pale seams between the plates, and a small rivet a
+// shade darker than the plate at every plate corner. Lit and shadowed by the sun like everything else, dropping
+// into place letter by letter and then floating, always turned to face the camera.
 import * as THREE from 'three/webgpu';
 import { local } from './boxes.js';
+import { SCHEMES } from './plane.js';
 
 const GLYPHS = {
   F: ['11111', '10000', '10000', '11110', '10000', '10000', '10000'],
@@ -14,10 +15,14 @@ const GLYPHS = {
   T: ['11111', '00100', '00100', '00100', '00100', '00100', '00100'],
 };
 const B = 10, GAP = 1, DEPTH = 5;
-const PLATE = [0xa4adb6, 0x99a2ab, 0xafb8c0, 0x9ea9b3], DEEP = [0x4e545b, 0x565c64, 0x474d54], RUST = [0x8a5a3a, 0x7d4f33];
-const BOLT = 0x4a5058, BOLT_R = 1.0;
+/** A colour scaled by `k` per channel. */
+const shade = (hex, k) => { const c = (v) => Math.max(0, Math.min(255, Math.round(v * k))); return (c(hex >> 16 & 255) << 16) | (c(hex >> 8 & 255) << 8) | c(hex & 255); };
+const { body, accent } = SCHEMES.player;
+const PLATE = [body, shade(body, 1.04), shade(body, 0.96)], DEEP = [accent, shade(accent, 0.97), shade(accent, 1.02)];
+const BOLT = shade(body, 0.72), BOLT_R = 0.7;
 const one = (set) => set[Math.floor(Math.random() * set.length)];
-const pick = (d) => (d > 0 ? one(DEEP) : Math.random() < 0.09 ? one(RUST) : one(PLATE));
+/** A plate's colour: cream in the depth, red on the face, the face a little brighter with each row up. */
+const pick = (d, row) => (d > 0 ? one(DEEP) : shade(one(PLATE), 0.86 + row * 0.03));
 const m = new THREE.Matrix4(), g = new THREE.Matrix4(), p = new THREE.Vector3(), q = new THREE.Quaternion(), s = new THREE.Vector3(), eul = new THREE.Euler();
 const ONE = new THREE.Vector3(1, 1, 1), UP = new THREE.Vector3(0, 1, 0);
 const backOut = (t) => { t = t < 0 ? 0 : t > 1 ? 1 : t; const c = 1.7; return 1 + (c + 1) * Math.pow(t - 1, 3) + c * Math.pow(t - 1, 2); };
@@ -39,14 +44,14 @@ export class Title {
         for (let d = 0; d < DEPTH; d++) {
           // the face plate sits a hair smaller than its neighbours so a dark seam of the plate behind shows
           const sz = d === 0 ? B * 0.93 : B;
-          this.blocks.push({ local: local(x, y, -d * B, sz, sz, d === 0 ? B * 1.06 : B), letter: li, col, delay: delay + d * 0.05, hex: pick(d), rough: d === 0 ? 0.38 : 0.6 });
+          this.blocks.push({ local: local(x, y, -d * B, sz, sz, d === 0 ? B * 1.06 : B), letter: li, col, delay: delay + d * 0.05, hex: pick(d, 6 - r), rough: d === 0 ? 0.38 : 0.6 });
         }
         // bolt heads at the plate corners, shared where plates meet
         for (const [ox, oy] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
           const bx = x + ox * B * 0.38, by = y + oy * B * 0.38, key = `${Math.round(bx * 10)},${Math.round(by * 10)}`;
           if (bolts.has(key)) continue;
           bolts.add(key);
-          this.blocks.push({ local: local(bx, by, B * 0.53 + 0.35, BOLT_R, BOLT_R, 0.9), letter: li, col, delay: delay + 0.08, hex: BOLT, rough: 0.45 });
+          this.blocks.push({ local: local(bx, by, B * 0.53 + 0.35, BOLT_R, BOLT_R, 0.9), letter: li, col, delay: delay + 0.08, hex: BOLT, rough: 0.5 });
         }
       }
     });
