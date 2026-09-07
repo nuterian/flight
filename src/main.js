@@ -24,7 +24,8 @@ async function boot() {
   // If the GPU device goes away (driver reset, tab throttled to death) the canvas would just freeze: say so instead.
   renderer.backend.device?.lost?.then((info) => { if (info.reason !== 'destroyed') fatal('The graphics device was lost', info.message || 'The browser reset the GPU.'); }).catch(() => {});
   canvas.addEventListener('webglcontextlost', (e) => { e.preventDefault(); fatal('The graphics context was lost', 'The browser reset the GPU.'); });
-  renderer.setPixelRatio(Math.min(devicePixelRatio, mobile ? 1.5 : 2));
+  let ratio = Math.min(devicePixelRatio, mobile ? 1.5 : 2);
+  renderer.setPixelRatio(ratio);
   // The canvas element is sized by its stylesheet (it always fills the screen); only the drawing buffer follows the
   // window here, so a stale size during a phone's rotation can never leave bars beside the picture.
   renderer.setSize(Math.max(1, innerWidth), Math.max(1, innerHeight), false);
@@ -246,6 +247,18 @@ async function boot() {
   pipeline.render();
   useTitleLens(true);
 
+  // Dynamic resolution on phones: eight long frames in a row shrink the drawing buffer a step (never below a pixel
+  // ratio of 1), ten seconds of headroom grow it back, so a hot phone keeps its frame rate rather than its pixels.
+  let slow = 0, fast = 0;
+  const resolution = (frame) => {
+    if (!mobile || game.state !== 'playing') return;
+    const long = frame > 1 / 45;
+    slow = long ? slow + 1 : 0; fast = long ? 0 : fast + 1;
+    if (slow >= 8 && ratio > 1) { ratio = Math.max(1, ratio - 0.25); slow = 0; }
+    else if (fast >= 600 && ratio < 1.5) { ratio += 0.25; fast = 0; }
+    else return;
+    renderer.setPixelRatio(ratio); fit();
+  };
   let last = performance.now();
   let acc = 0;
   const STEP = 1 / 120;
@@ -253,6 +266,7 @@ async function boot() {
     let frame = Math.min(0.05, (now - last) / 1000);
     last = now;
     if (innerWidth === 0 || innerHeight === 0) return;
+    resolution(frame);
     useTitleLens(game.state === 'title');
     menuMusic();
     input.update();
