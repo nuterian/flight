@@ -141,6 +141,7 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: #6ec1ff; fon
 #btn-track:hover { border-bottom-color: var(--cream); }
 #btn-track.pop span { display: inline-block; animation: bump 0.35s var(--spring); }
 .intro .mobilehint { display: none; margin: 14px 0 0; font-size: 13px; opacity: 0.8; }
+.intro .mobilehint.install { margin-top: 6px; font-size: 11px; opacity: 0.6; }
 /* today's flight: one pill under the prompt, with the date and your best for it */
 .intro .daily { margin: 14px 0 0; }
 #btn-daily { pointer-events: auto; font: inherit; font-weight: 800; font-size: 12px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--cream); background: var(--hud-shade); border: 2px solid rgba(255,246,229,0.55); border-radius: 999px; padding: 8px 16px; cursor: pointer; backdrop-filter: blur(6px); transition: transform 0.25s var(--spring), background 0.2s; }

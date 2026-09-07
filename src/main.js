@@ -25,7 +25,9 @@ async function boot() {
   renderer.backend.device?.lost?.then((info) => { if (info.reason !== 'destroyed') fatal('The graphics device was lost', info.message || 'The browser reset the GPU.'); }).catch(() => {});
   canvas.addEventListener('webglcontextlost', (e) => { e.preventDefault(); fatal('The graphics context was lost', 'The browser reset the GPU.'); });
   renderer.setPixelRatio(Math.min(devicePixelRatio, mobile ? 1.5 : 2));
-  renderer.setSize(Math.max(1, innerWidth), Math.max(1, innerHeight));
+  // The canvas element is sized by its stylesheet (it always fills the screen); only the drawing buffer follows the
+  // window here, so a stale size during a phone's rotation can never leave bars beside the picture.
+  renderer.setSize(Math.max(1, innerWidth), Math.max(1, innerHeight), false);
   renderer.toneMapping = THREE.NeutralToneMapping;
   renderer.toneMappingExposure = 1.05;
   renderer.shadowMap.enabled = true;
@@ -228,12 +230,17 @@ async function boot() {
   startsFrom($('title'), () => 'free');
   startsFrom($('gameover'), () => lastMode);
 
-  addEventListener('resize', () => {
+  const fit = () => {
     if (innerWidth === 0 || innerHeight === 0) return; // hidden tab / backgrounded pane
     camera.aspect = innerWidth / innerHeight;
     camera.updateProjectionMatrix();
-    renderer.setSize(innerWidth, innerHeight);
-  });
+    renderer.setSize(innerWidth, innerHeight, false);
+  };
+  // iPhones report the old size for a moment after a rotation, so fit again once it has settled
+  for (const ev of ['resize', 'orientationchange']) addEventListener(ev, () => { fit(); setTimeout(fit, 400); });
+  // On an iPhone the browser's own bars only go away as a home-screen app: say so, until it is one.
+  const standalone = navigator.standalone === true || matchMedia('(display-mode: standalone), (display-mode: fullscreen)').matches;
+  if (touch && /iPhone|iPad/.test(navigator.userAgent) && !standalone) $('installhint').classList.remove('hidden');
 
   // Compile the play graph once up front so the first shot fired doesn't stall on a shader build.
   pipeline.render();

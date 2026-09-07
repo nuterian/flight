@@ -3,8 +3,15 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <meta name="mobile-web-app-capable" content="yes" />
   <meta name="theme-color" content="#1d2b3a" />
+  <!-- added to a phone's home screen, the game opens as a full-screen app with no browser chrome -->
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Flight" />
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="apple-touch-icon" href="apple-touch-icon.png" />
+  <link rel="icon" href="icon.svg" type="image/svg+xml" />
   <title>Flight</title>
   <link rel="stylesheet" href="/src/style.css" />
 </head>
@@ -58,6 +65,7 @@
         <button id="btn-help" aria-label="All controls">?</button>
       </div>
       <p class="mobilehint">Tilt to steer, tap FIRE. Hold it landscape.</p>
+      <p class="mobilehint install hidden" id="installhint">For the whole screen: Share &rsaquo; Add to Home Screen, then open it from there.</p>
       <p class="tip" id="tip"></p>
       <p class="daily"><button id="btn-daily">Today's flight <kbd>T</kbd><span id="dailyinfo"></span></button></p>
       <div id="medals" aria-label="Medals"></div>
