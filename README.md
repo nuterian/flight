@@ -19,7 +19,7 @@ phone, open it in landscape and tilt to steer.
 | `I` / `C` | invert pitch / recenter tilt |
 | `T` | today's flight |
 | `M` / `Esc` | mute / quit to title |
-| `P` | frame meter (also `?perf` in the address) |
+| `P` / `R` | frame meter (also `?perf` in the address) / resolution: full, a quarter step down, a half step down (remembered) |
 | Gamepad | left stick flies, right trigger fires, left trigger boosts, bumpers rudder, Start / Back |
 
 Phones: tilt like a steering wheel to roll, tip the top edge toward you to climb, hold FIRE and BOOST. The `?` on the
@@ -83,7 +83,21 @@ note is generated in code.
   water is clear enough to show it, antialiasing is spent on the scene and not on the final full-screen quad, and
   the motion smear costs nothing when it is off. If a machine still falls behind (a fanless laptop loses a third
   of its GPU clock once warm) the drawing buffer steps down, never below a pixel ratio of 1.5 on a laptop, and
-  steps back up when there is room.
+  steps back up when there is room. If it is still slow at the floor, at a steady 30 frames a second, the game says
+  what that usually is (a browser's Energy Saver, a system's Low Power Mode) and gives the pixels back.
+- **Start and idle.** The world is a second of arithmetic before it is anything to draw. It runs in up to four
+  workers, started by a page script of a few kilobytes (`start.js`, `prepare.js`, `grid.js`) before the game's own
+  megabyte has been fetched and parsed, so the world is usually waiting for the renderer and not the other way round
+  (`boot.worker.js`, `bake.js`): the heights in interleaved
+  bands on all of them, then the flood and the terraces on one, then the land's geometry there while the others bake
+  the sky visibility and the three suns and the page builds the sea, the props and the landmarks from the grid it has
+  already been handed. Everything crosses as transferred typed arrays, and every piece falls back to being built on
+  the page if a worker cannot be had. On the title and the debrief, twenty seconds without a key or a pointer (or the
+  window not in front) drops the picture to every other frame, so a fanless laptop left on the title is not already
+  warm when the run starts. Until the first frame is really on the screen the page shows today's sky, not a blank,
+  and nothing on it moves (the GPU is building pipelines, and anything animated then stutters with it): the
+  picture, the letters and the prompts, already filled in, arrive together. And `?perf` puts the start's timeline on the screen: when the workers started, the grid, the land and its light,
+  the script, the renderer, the world, the first frame sent and the first frame seen.
 - **Everything is a box.** Every voxel in the game is an instance of one unit cube in a handful of batches: lit,
   palm fronds (with wind and downwash), glow (tracers, flames, the sun) and soft (prop discs, splash rings). A plane is a table of 30-odd boxes placed under its matrix each frame, control surfaces, flexing
   wingtips, retracting gear and pilot included.
@@ -108,7 +122,8 @@ note is generated in code.
 | | |
 |---|---|
 | `src/main.js` | renderer, post pipeline (bloom, sun shafts, title depth of field, grade), start flow, loop |
-| `src/terrain.js` | pure-JS geology: heightfield, lakes, rivers, terraces, ground queries |
+| `src/terrain.js`, `src/grid.js` | pure-JS geology: heightfield, lakes, rivers, terraces; the finished grid and the ground queries over it (no imports) |
+| `src/start.js`, `src/times.js`, `src/bake.js`, `src/prepare.js`, `src/boot.worker.js` | what is computed once from the terrain (the land's geometry, baked light, the water's noise), and the workers that compute it while the page starts |
 | `src/world.js` | terrain mesh, sea, sky, clouds, props, wildlife, villages, lighting |
 | `src/boxes.js`, `src/plane.js` | the instanced box batches and the plane as data |
 | `src/aircraft.js`, `src/ai.js`, `src/bullets.js` | flight model, bandit brains, tracers with aim assist |

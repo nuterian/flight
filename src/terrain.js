@@ -1,37 +1,12 @@
-// Pure-JS terrain shared by rendering, collision and AI. No Three imports so it can be unit-tested in Node.
+// Pure-JS terrain: how the grid that grid.js serves is made. (Everything grid.js exports is re-exported from here.)
 //
 // The land is composed rather than sampled from one noise: warped continent noise for the coastlines, ridged noise
 // for mountain spines, small hills on top. That smooth field is then processed on a 5-unit grid: depressions are
 // flooded into lakes, rain is drained downhill into rivers that carve valleys, and the result is quantized into
 // terraces whose height grows with altitude (3-unit steps on the shore, 6 in the hills, 12 in the mountains).
 import { ImprovedNoise } from 'three/addons/math/ImprovedNoise.js';
-
-// The geology is designed on a 3200-unit map of 5-unit columns and then scaled up: every column is SCALE times
-// wider and the land SCALE times taller, so the same islands, rivers and terraces come out larger against the
-// trees, the houses and the plane, at the same grid cost.
-export const SCALE = 1.4;
-const BASE_SIZE = 3200, BASE_CELL = 5;
-export const WORLD_SIZE = BASE_SIZE * SCALE;      // terrain extent
-/** Combat zone: an invisible box. Leaving it starts a 10 second countdown. */
-export const BOUNDS = { half: 1500 * SCALE, ceiling: 720, grace: 10 };
-export const SEA_LEVEL = 0;
-export const CELL = BASE_CELL * SCALE;            // voxel column footprint
-export const N = WORLD_SIZE / CELL / 2;   // cells from the centre to the edge
-const W = 2 * N + 2;                 // grid width, one guard cell on each side
-export const KIND = { SEA: 0, LAKE: 1, RIVER: 2, SAND: 3, WETSAND: 4, GRASS: 5, MEADOW: 6, ROCK: 7, STONE: 8, SNOW: 9 };
-
-// Terrace tops. Level L occupies [TOPS[L-1], TOPS[L]) and its top face sits at TOPS[L]; level 0 is the sea bed.
-export const TOPS = [0];
-for (let t = 3; t <= 12; t += 3) TOPS.push(t * SCALE);
-for (let t = 18; t <= 60; t += 6) TOPS.push(t * SCALE);
-for (let t = 72; t <= 252; t += 12) TOPS.push(t * SCALE);
-export const levelTop = (L) => TOPS[Math.min(Math.max(L, 0), TOPS.length - 1)];
-export function levelOfHeight(h) {
-  if (h < 0) return 0;
-  let L = 1;
-  while (L < TOPS.length - 1 && TOPS[L] <= h) L++;
-  return L;
-}
+import { SCALE, BASE_SIZE, CELL, N, ROWS as W, KIND, TOPS, levelTop, levelOfHeight, gridArrays, adoptGrid, onMissingGrid } from './grid.js';
+export * from './grid.js';
 
 const noise = new ImprovedNoise();
 const n2 = (x, z, s) => noise.noise(x, z, s);
@@ -80,7 +55,6 @@ const smooth01 = (t) => { t = t < 0 ? 0 : t > 1 ? 1 : t; return t * t * (3 - 2 *
 
 // ---------------------------------------------------------------- the grid
 let H = null, M = null, F = null, LEVEL = null, WATER = null, KINDS = null, DOWN = null, ACC = null;
-const idx = (i, j) => (i + N + 1) * W + (j + N + 1);
 
 /** Binary min-heap of cell indices keyed by a float array. */
 class Heap {
@@ -98,30 +72,52 @@ const NB8 = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1
 const NB4 = [[1, 0], [-1, 0], [0, 1], [0, -1]];
 const RIVER_MIN = 170;               // cells of catchment before a stream shows
 
+/** Step 1 for rows [r0, r1): the smooth height and the mountain weight of every cell in them. Each cell stands alone,
+ *  so the rows can be shared out between workers and stitched back together (see prepare.js). */
+export function heightRows(r0, r1) {
+  const h = new Float32Array((r1 - r0) * W), m = new Float32Array((r1 - r0) * W);
+  for (let a = r0; a < r1; a++) for (let b = 0; b < W; b++) {
+    const c = (a - r0) * W + b;
+    h[c] = smoothHeight((a - N - 1) * CELL, (b - N - 1) * CELL); m[c] = lastMountain;
+  }
+  return { h, m };
+}
+
+/** The whole grid, here and now. The game boots through prepare.js instead, which builds it in workers and hands
+ *  it over with `adoptGrid`; this is what runs when there are no workers, and in Node. */
 export function ensureGrid() {
-  if (H) return;
+  if (gridArrays().H) return;
+  const { h, m } = heightRows(0, W);
+  finishGrid(h, m);
+}
+
+/** Steps 2 to 6 over finished heights: flood, drain, classify the water, terrace, name the ground. */
+export function finishGrid(heights, mountain) {
   const t0 = typeof performance !== 'undefined' ? performance.now() : Date.now();
   const size = W * W;
-  H = new Float32Array(size); M = new Float32Array(size); F = new Float32Array(size);
+  H = heights; M = mountain; F = new Float32Array(size);
   LEVEL = new Int16Array(size); WATER = new Float32Array(size).fill(-1); KINDS = new Uint8Array(size);
   DOWN = new Int32Array(size).fill(-1); ACC = new Float32Array(size).fill(1);
-
-  // 1. smooth heights
-  for (let i = -N - 1; i <= N; i++) for (let j = -N - 1; j <= N; j++) {
-    const c = idx(i, j);
-    H[c] = smoothHeight(i * CELL, j * CELL); M[c] = lastMountain;
-  }
 
   // 2. priority flood: fill every depression up to its spill point. A hair of slope keeps flats draining.
   F.fill(Infinity);
   const heap = new Heap(F);
   const closed = new Uint8Array(size);
-  for (let c = 0; c < size; c++) if (H[c] <= 0) { F[c] = H[c]; closed[c] = 1; heap.push(c); }
+  // (Every sea cell is a source, but only one with land beside it can ever raise anything: the open sea, four
+  // fifths of the grid, stays out of the heap.)
+  for (let c = 0; c < size; c++) if (H[c] <= 0) { F[c] = H[c]; closed[c] = 1; }
+  for (let c = 0; c < size; c++) {
+    if (!closed[c]) continue;
+    const ci = Math.floor(c / W), cj = c % W;
+    let shore = false;
+    for (let k = 0; k < 8 && !shore; k++) { const ni = ci + NB8[k][0], nj = cj + NB8[k][1]; shore = ni >= 0 && nj >= 0 && ni < W && nj < W && !closed[ni * W + nj]; }
+    if (shore) heap.push(c);
+  }
   while (heap.size) {
     const c = heap.pop();
     const ci = Math.floor(c / W), cj = c % W;
-    for (const [di, dj] of NB8) {
-      const ni = ci + di, nj = cj + dj;
+    for (let k = 0; k < 8; k++) {
+      const ni = ci + NB8[k][0], nj = cj + NB8[k][1];
       if (ni < 0 || nj < 0 || ni >= W || nj >= W) continue;
       const n = ni * W + nj;
       if (closed[n]) continue;
@@ -139,8 +135,8 @@ export function ensureGrid() {
     order[nLand++] = c;
     const ci = Math.floor(c / W), cj = c % W;
     let best = -1, bestF = F[c];
-    for (const [di, dj] of NB8) {
-      const ni = ci + di, nj = cj + dj;
+    for (let k = 0; k < 8; k++) {
+      const ni = ci + NB8[k][0], nj = cj + NB8[k][1];
       if (ni < 0 || nj < 0 || ni >= W || nj >= W) continue;
       const n = ni * W + nj;
       if (F[n] < bestF) { bestF = F[n]; best = n; }
@@ -226,48 +222,8 @@ export function ensureGrid() {
   }
 
   const t1 = typeof performance !== 'undefined' ? performance.now() : Date.now();
-  if (typeof console !== 'undefined') console.info(`terrain: ${W}x${W} cells, ${nLand} land in ${Math.round(t1 - t0)} ms`);
+  if (typeof console !== 'undefined') console.info(`terrain: ${W}x${W} cells, ${nLand} land, flooded and terraced in ${Math.round(t1 - t0)} ms`);
+  adoptGrid({ H, LEVEL, WATER, KINDS });
+  H = M = F = LEVEL = WATER = KINDS = DOWN = ACC = null;   // the queries have what they read; the rest was scaffolding
 }
-
-// ---------------------------------------------------------------- queries
-const cellI = (x) => Math.round(x / CELL), cellJ = (z) => Math.round(z / CELL);
-const inGrid = (i, j) => i >= -N - 1 && i <= N && j >= -N - 1 && j <= N;
-
-/** Smooth (un-terraced) terrain height at (x, z), bilinear over the grid. Negative below sea level. */
-export function heightAt(x, z) {
-  ensureGrid();
-  const fi = x / CELL, fj = z / CELL;
-  const i0 = Math.floor(fi), j0 = Math.floor(fj);
-  if (!inGrid(i0, j0) || !inGrid(i0 + 1, j0 + 1)) return -40;
-  const tx = fi - i0, tz = fj - j0;
-  const a = H[idx(i0, j0)], b = H[idx(i0 + 1, j0)], c = H[idx(i0, j0 + 1)], d = H[idx(i0 + 1, j0 + 1)];
-  return (a * (1 - tx) + b * tx) * (1 - tz) + (c * (1 - tx) + d * tx) * tz;
-}
-
-/** Terrace level of a column: 0 = sea, 1 = first terrace, ... */
-export function levelAtCell(i, j) { ensureGrid(); return inGrid(i, j) ? LEVEL[idx(i, j)] : 0; }
-export function cellKind(i, j) { ensureGrid(); return inGrid(i, j) ? KINDS[idx(i, j)] : KIND.SEA; }
-/** Surface height of lake or river water over a cell, or -1 when there is none (the sea is level 0). */
-export function cellWater(i, j) { ensureGrid(); return inGrid(i, j) ? WATER[idx(i, j)] : -1; }
-export function cellTop(i, j) { return levelTop(levelAtCell(i, j)); }
-
-/** Walkable ground height under (x, z): the terrace top, or the water surface over sea, lake or river. */
-export function groundAt(x, z) {
-  ensureGrid();
-  const i = cellI(x), j = cellJ(z);
-  if (!inGrid(i, j)) return SEA_LEVEL;
-  const c = idx(i, j);
-  if (LEVEL[c] === 0) return SEA_LEVEL;
-  if (WATER[c] >= 0) return WATER[c];
-  return TOPS[LEVEL[c]];
-}
-export function isWaterAt(x, z) {
-  ensureGrid();
-  const i = cellI(x), j = cellJ(z);
-  if (!inGrid(i, j)) return true;
-  const c = idx(i, j);
-  return LEVEL[c] === 0 || WATER[c] >= 0;
-}
-export function isSeaAt(x, z) { return levelAtCell(cellI(x), cellJ(z)) === 0; }
-/** What kind of ground lies under (x, z). */
-export function kindAt(x, z) { return cellKind(cellI(x), cellJ(z)); }
+onMissingGrid(ensureGrid);

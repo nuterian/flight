@@ -1,6 +1,7 @@
 // The daily flight: one seeded run per calendar day. The seed drives where you start, where each wave's portal
 // opens and how each wave is composed, so everyone who flies today flies the same day. The world itself is fixed.
 import { store } from './audio.js';
+import { mulberry32 } from './rng.js';
 
 /** Local calendar date as YYYY-MM-DD. */
 export function todayKey(d = new Date()) {
@@ -21,15 +22,7 @@ export function dailySeed(key = todayKey()) {
   for (let i = 0; i < key.length; i++) { h ^= key.charCodeAt(i); h = Math.imul(h, 0x01000193); }
   return h >>> 0;
 }
-/** Small, fast, seedable PRNG with the same call shape as Math.random. */
-export function mulberry32(a) {
-  return function () {
-    a |= 0; a = (a + 0x6d2b79f5) | 0;
-    let t = Math.imul(a ^ (a >>> 15), 1 | a);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
+export { mulberry32 };
 
 /** Today's best, or null when today has not been flown yet. */
 export function loadDailyBest(key = todayKey()) {

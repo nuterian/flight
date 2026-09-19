@@ -14,6 +14,11 @@
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; overflow: hidden; background: var(--ink); font-family: "Avenir Next", "Segoe UI", system-ui, sans-serif; color: var(--cream); }
 #game { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+/* Today's sky over the canvas (start.js) until the first frame is on it (main.js): the start is never a blank page,
+   and nothing on the page moves while the GPU is still building its pipelines. The title waits for the same moment. */
+#veil { position: fixed; inset: 0; pointer-events: none; transition: opacity 0.6s ease-out; }
+#veil.gone { opacity: 0; }
+body:not(.ready) #title { display: none; }
 .hidden { display: none !important; }
 
 /* ---- HUD ---------------------------------------------------------------------------------------------------- */
@@ -123,19 +128,21 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: var(--ink); 
 
 /* ---- screens ------------------------------------------------------------------------------------------------ */
 .screen { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; background: radial-gradient(ellipse at center, rgba(29,43,58,0.15), rgba(29,43,58,0.55)); animation: fadeIn 0.4s both; }
-/* the title: the 3D letters own the middle of the screen, the prompt and primary keys sit along the bottom */
+/* the title: the 3D letters own the middle of the screen, the prompt and primary keys sit along the bottom. (Its
+   pills do not blur what is behind them: the title's depth of field already has, and a backdrop filter over a canvas
+   that changes every frame is a blur pass per pill per frame.) */
 #title { align-items: flex-end; background: linear-gradient(180deg, rgba(29,43,58,0) 55%, rgba(29,43,58,0.55) 100%); }
-.intro { text-align: center; padding: 0 24px calc(34px + env(safe-area-inset-bottom)); color: var(--cream); text-shadow: var(--hud-shadow); animation: introIn 0.8s var(--spring) 0.9s both; }
+.intro { text-align: center; padding: 0 24px calc(34px + env(safe-area-inset-bottom)); color: var(--cream); text-shadow: var(--hud-shadow); animation: introIn 0.8s var(--spring) 0.35s both; }
 @keyframes introIn { from { opacity: 0; transform: translateY(24px); } to { opacity: 1; transform: none; } }
 .intro .tag { margin: 0 0 14px; font-size: 16px; opacity: 0.85; }
 .intro .tip { margin: 12px 0 0; font-size: 12px; letter-spacing: 0.08em; opacity: 0.6; min-height: 1.4em; transition: opacity 0.4s; }
 .intro .tip.fade { opacity: 0; }
 .intro .press { margin: 0 0 18px; font-size: 15px; }
 .quick { display: flex; align-items: center; justify-content: center; gap: 10px; }
-.quick > div { display: flex; align-items: center; gap: 2px; padding: 8px 14px 8px 8px; border-radius: 999px; background: var(--hud-shade); backdrop-filter: blur(6px); font-size: 13px; font-weight: 700; letter-spacing: 0.06em; }
+.quick > div { display: flex; align-items: center; gap: 2px; padding: 8px 14px 8px 8px; border-radius: 999px; background: var(--hud-shade); font-size: 13px; font-weight: 700; letter-spacing: 0.06em; }
 .quick span { margin-left: 8px; opacity: 0.8; }
 .quick kbd { min-width: 24px; padding: 2px 6px; margin: 0 1px; font-size: 12px; border-bottom-width: 3px; color: var(--ink); text-shadow: none; }
-#btn-help { width: 38px; height: 38px; border-radius: 50%; border: 2px solid rgba(255,246,229,0.8); background: var(--hud-shade); color: var(--cream); font: inherit; font-weight: 900; font-size: 17px; cursor: pointer; backdrop-filter: blur(6px); transition: transform 0.25s var(--spring), background 0.2s; }
+#btn-help { width: 38px; height: 38px; border-radius: 50%; border: 2px solid rgba(255,246,229,0.8); background: var(--hud-shade); color: var(--cream); font: inherit; font-weight: 900; font-size: 17px; cursor: pointer; transition: transform 0.25s var(--spring), background 0.2s; }
 #btn-help:hover { transform: scale(1.12) rotate(8deg); background: rgba(255,246,229,0.25); }
 .intro .best { margin: 16px 0 0; font-size: 12px; letter-spacing: 0.2em; text-transform: uppercase; opacity: 0.7; }
 .intro .best span { font-weight: 800; }
@@ -146,7 +153,7 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: var(--ink); 
 .intro .mobilehint.install { margin-top: 6px; font-size: 11px; opacity: 0.6; }
 /* today's flight: one pill under the prompt, with the date and your best for it */
 .intro .daily { margin: 14px 0 0; }
-#btn-daily { pointer-events: auto; font: inherit; font-weight: 800; font-size: 12px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--cream); background: var(--hud-shade); border: 2px solid rgba(255,246,229,0.55); border-radius: 999px; padding: 8px 16px; cursor: pointer; backdrop-filter: blur(6px); transition: transform 0.25s var(--spring), background 0.2s; }
+#btn-daily { pointer-events: auto; font: inherit; font-weight: 800; font-size: 12px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--cream); background: var(--hud-shade); border: 2px solid rgba(255,246,229,0.55); border-radius: 999px; padding: 8px 16px; cursor: pointer; transition: transform 0.25s var(--spring), background 0.2s; }
 #btn-daily:hover { transform: scale(1.05); background: rgba(255,246,229,0.22); }
 #btn-daily kbd { min-width: 18px; padding: 1px 5px; margin: 0 4px 0 8px; font-size: 11px; border-bottom-width: 3px; color: var(--ink); text-shadow: none; }
 #btn-daily span { display: inline-block; margin-left: 8px; padding-left: 10px; border-left: 1px solid rgba(255,246,229,0.35); font-weight: 700; letter-spacing: 0.06em; text-transform: none; opacity: 0.85; }

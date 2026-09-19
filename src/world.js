@@ -3,7 +3,9 @@ import {
   color, positionLocal, positionWorld, normalize, mix, smoothstep, dot, float, vec2, vec3, attribute, time, sin, cos,
   saturate, pow, uniform, fog, rangeFogFactor, instanceIndex, hash, cameraPosition, reflect, transformNormalToView, reflector, uv, texture3D, abs, fract, mod, max as tslMax, min as tslMin, length, exp, floor, select, normalWorld, vertexColor, step, dot as tslDot, luminance, positionView, texture, Fn,
 } from 'three/tsl';
-import { ensureGrid, heightAt, levelAtCell, cellKind, cellWater, cellTop, levelTop, isSeaAt, KIND, N as HALF_CELLS, CELL, BOUNDS, SCALE, WORLD_SIZE } from './terrain.js';
+import { heightAt, levelAtCell, cellKind, cellWater, cellTop, isSeaAt, KIND, N as HALF_CELLS, CELL, BOUNDS, SCALE } from './terrain.js';
+import { NOISE, OCCLUSION_W } from './bake.js';
+import { SUN_DIRS, SKIES } from './times.js';
 import { Boxes, local } from './boxes.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { Trails } from './trails.js';
@@ -20,98 +22,25 @@ export const SUN_DIR = new THREE.Vector3(0.5, 0.7, 0.5).normalize();   // mutate
 // Time of day: a sun direction and the tints that go with it. High noon is the original look; morning is cool
 // and clear with the sun low in the east; golden hour is warm with long shadows. Everything stays readable.
 export const TIMES = {
-  morning: { dir: [0.85, 0.4, 0.25], sun: [0xfff8ec, 3.0], hemi: [0xb2d8ff, 0xd8c8a6, 1.35], fog: 0xd8e8f6, skyTop: 0x3f8ce9, skyMid: 0x93cdff, horizon: 0xe2f0ff, glow: 0xffe0b0, disc: 0xfff8ea },
-  noon: { dir: [0.5, 0.7, 0.5], sun: [0xfff1d8, 3.3], hemi: [0x9fd0ff, 0xe4c58c, 1.25], fog: 0xbfe0ff, skyTop: 0x2f7fe6, skyMid: 0x7fc4ff, horizon: 0xbfe0ff, glow: 0xffc27a, disc: 0xfff3d6 },
-  golden: { dir: [-0.62, 0.3, 0.55], sun: [0xffc98a, 3.5], hemi: [0x8cb0e6, 0xdca070, 1.1], fog: 0xf2cfa8, skyTop: 0x2a5fc4, skyMid: 0x6fa3e8, horizon: 0xffc79c, glow: 0xff9a4a, disc: 0xffe0b0 },
+  morning: { dir: SUN_DIRS.morning, sun: [0xfff8ec, 3.0], hemi: [0xb2d8ff, 0xd8c8a6, 1.35], fog: 0xd8e8f6, ...SKIES.morning, glow: 0xffe0b0, disc: 0xfff8ea },
+  noon: { dir: SUN_DIRS.noon, sun: [0xfff1d8, 3.3], hemi: [0x9fd0ff, 0xe4c58c, 1.25], fog: 0xbfe0ff, ...SKIES.noon, glow: 0xffc27a, disc: 0xfff3d6 },
+  golden: { dir: SUN_DIRS.golden, sun: [0xffc98a, 3.5], hemi: [0x8cb0e6, 0xdca070, 1.1], fog: 0xf2cfa8, ...SKIES.golden, glow: 0xff9a4a, disc: 0xffe0b0 },
 };
 
 const rng = mulberry32(1337);
 const rand = (a = 0, b = 1) => a + rng() * (b - a);
 const FUN = [0xff5a3c, 0xffc233, 0x2fd1a0, 0x3d8dff, 0xb45cff, 0xff6fb0, 0xffe066];
 
-// ---------------------------------------------------------------- terrain colors
-// Tops by kind (grass darkens with altitude); walls are dirt under grass, sand under beaches, the rock's own color
-// elsewhere. Strata bands and per-block tone come from the material, not the vertices, so flat runs can merge.
-const C = (hex) => new THREE.Color(hex);
-const TOP = {
-  [KIND.SAND]: C(0xf5e0a0), [KIND.WETSAND]: C(0xd9c07a), [KIND.ROCK]: C(0x9c7a55), [KIND.STONE]: C(0x8d8f93), [KIND.SNOW]: C(0xfdfbf6),
-  [KIND.LAKE]: C(0xc9b98a), [KIND.RIVER]: C(0xc4b07a),
-};
-const GRASS_LO = C(0xa9e05c), GRASS_HI = C(0x3f9e5c);
-const WALL = { dirt: C(0xa27a52), sand: C(0xd8c17f), rock: C(0x8f6a45), stone: C(0x7c7e83), snow: C(0x9ea2a8) };
-const tmpC = new THREE.Color();
-function topColor(i, j, out) {
-  const k = cellKind(i, j), top = cellTop(i, j);
-  if (k === KIND.GRASS || k === KIND.MEADOW) return out.copy(GRASS_LO).lerp(GRASS_HI, THREE.MathUtils.clamp(top / (66 * SCALE), 0, 1));
-  return out.copy(TOP[k] || GRASS_LO);
-}
-function wallColor(kind, out) {
-  if (kind === KIND.GRASS || kind === KIND.MEADOW) return out.copy(WALL.dirt);
-  if (kind === KIND.SAND || kind === KIND.WETSAND || kind === KIND.LAKE || kind === KIND.RIVER) return out.copy(WALL.sand);
-  if (kind === KIND.ROCK) return out.copy(WALL.rock);
-  if (kind === KIND.SNOW) return out.copy(WALL.snow);
-  return out.copy(WALL.stone);
-}
-
 // ---------------------------------------------------------------- baked light: ambient occlusion and far sun shadows
-// The sun is fixed for a run and the terrain never moves, so two things are baked once into one texture over the
-// grid, and read per pixel by world position (the greedy-merged mesh has no vertices where they would be needed):
-//  R    sky visibility: how much of the sky a cell sees, from the horizon angle in eight directions (ambient occlusion
-//       for the terraces, creases and valley floors)
-//  GBA  sun occlusion for morning, noon and golden hour: whether higher ground toward the sun blocks it, marched on a
-//       half-resolution grid. Beyond the reach of the real shadow map this is what shades the far hills and valleys.
+// Baked in bake.js, one channel a job: R is how much sky a cell sees, G, B and A whether the morning, noon and golden
+// hour sun reaches it. Here the four become one texture over the grid, read per pixel by world position.
 const bake = { tex: null, sel: uniform(new THREE.Vector3(0, 1, 0)) };
-function bakeOcclusion() {
-  const t0 = performance.now();
-  const N = HALF_CELLS, W = 2 * N + 2, size = W * W;
-  const top = new Float32Array(size);
-  for (let i = -N - 1; i <= N; i++) for (let j = -N - 1; j <= N; j++) top[(i + N + 1) * W + (j + N + 1)] = cellTop(i, j);
-  const data = new Uint8Array(size * 4);
-  // sky visibility: the steepest slope up in each of eight directions, one atan per direction
-  const DIRS = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]], STEPS = [1, 2, 3, 5, 8, 12];
-  const offs = DIRS.map(([da, db]) => STEPS.map((s) => [da * s * W + db * s, 1 / (s * CELL * (da && db ? 1.414 : 1))]));
-  const PAD = 12;
-  for (let a = 0; a < W; a++) for (let b = 0; b < W; b++) {
-    const c = a * W + b, h = top[c];
-    const inside = a >= PAD && a < W - PAD && b >= PAD && b < W - PAD;
-    let occ = 0;
-    for (let k = 0; k < 8; k++) {
-      let best = 0;
-      const o = offs[k];
-      if (inside) { for (let q = 0; q < 6; q++) { const sl = (top[c + o[q][0]] - h) * o[q][1]; if (sl > best) best = sl; } }
-      if (best > 0) occ += Math.min(1, Math.atan(best) / (Math.PI * 0.5));
-    }
-    occ /= 8;
-    data[c * 4] = Math.round(255 * (1 - 0.8 * Math.pow(occ, 1.1)));
-  }
-  // sun occlusion on every other cell (copied into its 2x2 block; linear filtering softens the edges): march toward
-  // the sun along precomputed grid offsets and stop at the first higher ground that blocks it
-  const presets = ['morning', 'noon', 'golden'];
-  presets.forEach((name, k) => {
-    const d = TIMES[name].dir, hl = Math.hypot(d[0], d[2]), ux = d[0] / hl, uz = d[2] / hl, slope = d[1] / hl;
-    const steps = [];
-    for (let s = 1; s <= 64; s += s < 16 ? 1 : 2) steps.push([Math.round(ux * s) * W + Math.round(uz * s), s * CELL * slope + 0.6, Math.round(ux * s), Math.round(uz * s)]);
-    const M = 66;
-    for (let a = 0; a < W; a += 2) for (let b = 0; b < W; b += 2) {
-      const c = a * W + b, h = top[c];
-      let lit = 255;
-      const inside = a >= M && a < W - M && b >= M && b < W - M;
-      for (let q = 0; q < steps.length; q++) {
-        const st = steps[q];
-        let hh;
-        if (inside) hh = top[c + st[0]];
-        else { const aa = Math.min(W - 1, Math.max(0, a + st[2])), bb = Math.min(W - 1, Math.max(0, b + st[3])); hh = top[aa * W + bb]; }
-        if (hh > h + st[1]) { lit = 0; break; }
-      }
-      data[c * 4 + 1 + k] = lit;
-      if (b + 1 < W) data[(c + 1) * 4 + 1 + k] = lit;
-      if (a + 1 < W) { data[(c + W) * 4 + 1 + k] = lit; if (b + 1 < W) data[(c + W + 1) * 4 + 1 + k] = lit; }
-    }
-  });
+function occlusionTexture(channels) {
+  const W = OCCLUSION_W, data = new Uint8Array(W * W * 4);
+  for (let k = 0; k < 4; k++) { const ch = channels[k]; for (let c = 0, o = k; c < ch.length; c++, o += 4) data[o] = ch[c]; }
   const tex = new THREE.DataTexture(data, W, W, THREE.RGBAFormat);
   tex.magFilter = tex.minFilter = THREE.LinearFilter; tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping; tex.needsUpdate = true;
-  bake.tex = tex; bake.ms = Math.round(performance.now() - t0);
-  console.info(`baked occlusion: ${W}x${W} in ${bake.ms} ms`);
+  bake.tex = tex;
 }
 /** The bake sampled at this pixel's world position. */
 function bakeSample() {
@@ -120,123 +49,10 @@ function bakeSample() {
   return texture(bake.tex, vec2(u, v));
 }
 
-// ---------------------------------------------------------------- terrain (voxel columns, greedy-merged)
-function buildTerrain() {
-  ensureGrid();
-  const N = HALF_CELLS;
-  // The land is cut into a 4x4 grid of meshes so each pass draws only the part it can see: the shadow map covers a
-  // sixteenth of the map, the view and the water's mirror about half. A quad belongs to the chunk its first corner
-  // is in (a long merged run may reach into the next one; the chunk's bounds are measured from what it holds).
-  // Four corners and six indices a quad.
-  const CHUNKS = 4, chunkSize = WORLD_SIZE / CHUNKS;
-  const chunks = Array.from({ length: CHUNKS * CHUNKS }, () => ({ pos: [], nrm: [], colr: [], lip: [], topcol: [], idx: [] }));
-  const chunkAt = (x, z) => chunks[THREE.MathUtils.clamp(Math.floor((x + WORLD_SIZE / 2) / chunkSize), 0, CHUNKS - 1) * CHUNKS + THREE.MathUtils.clamp(Math.floor((z + WORLD_SIZE / 2) / chunkSize), 0, CHUNKS - 1)];
-  const NO_LIP = -1000;
-  const corners = (c, ax, ay, az, bx, by, bz, cx, cy, cz, dx, dy, dz, nx, ny, nz) => {
-    const v = c.pos.length / 3;
-    c.pos.push(ax, ay, az, bx, by, bz, cx, cy, cz, dx, dy, dz);
-    c.nrm.push(nx, ny, nz, nx, ny, nz, nx, ny, nz, nx, ny, nz);
-    c.idx.push(v, v + 1, v + 2, v, v + 2, v + 3);
-  };
-  const quad = (ax, ay, az, bx, by, bz, cx, cy, cz, dx, dy, dz, nx, ny, nz, col) => {
-    const c = chunkAt(ax, az);
-    corners(c, ax, ay, az, bx, by, bz, cx, cy, cz, dx, dy, dz, nx, ny, nz);
-    for (let k = 0; k < 4; k++) { c.colr.push(col.r, col.g, col.b); c.lip.push(NO_LIP); c.topcol.push(0, 0, 0); }
-  };
-  // Wall quad with per-vertex color: a/d are the bottom corners (lo color), b/c the top corners (hi color).
-  // `fringe` is the top face's color when grass should hang over the lip, else null.
-  const wallQuad = (ax, ay, az, bx, by, bz, cx, cy, cz, dx, dy, dz, nx, ny, nz, hi, lo, fringe) => {
-    const c = chunkAt(ax, az);
-    corners(c, ax, ay, az, bx, by, bz, cx, cy, cz, dx, dy, dz, nx, ny, nz);
-    c.colr.push(lo.r, lo.g, lo.b, hi.r, hi.g, hi.b, hi.r, hi.g, hi.b, lo.r, lo.g, lo.b);
-    for (let k = 0; k < 4; k++) { c.lip.push(fringe ? by : NO_LIP); c.topcol.push(fringe ? fringe.r : 0, fringe ? fringe.g : 0, fringe ? fringe.b : 0); }
-  };
-  const S = 2 * N;
-  const at = (i, j) => (i + N) * S + (j + N);
-  const half = CELL / 2, SEA_BOTTOM = -8;
-
-  // per-cell top color key: kind/altitude color darkened by baked occlusion, quantized so equal cells merge
-  const level = new Int16Array(S * S), key = new Int32Array(S * S), kinds = new Uint8Array(S * S);
-  const palette = [], paletteKind = [], paletteIndex = new Map();
-  const colorId = (c, kind) => { const h = c.getHex(); let id = paletteIndex.get(h); if (id === undefined) { id = palette.length; palette.push(c.clone()); paletteKind.push(kind); paletteIndex.set(h, id); } return id; };
-  for (let i = -N; i < N; i++) for (let j = -N; j < N; j++) {
-    const L = levelAtCell(i, j), c = at(i, j);
-    level[c] = L; kinds[c] = cellKind(i, j);
-    if (L === 0) continue;
-    topColor(i, j, tmpC);
-    let higher = 0;
-    if (levelAtCell(i + 1, j) > L) higher++; if (levelAtCell(i - 1, j) > L) higher++;
-    if (levelAtCell(i, j + 1) > L) higher++; if (levelAtCell(i, j - 1) > L) higher++;
-    tmpC.multiplyScalar(1 - higher * 0.05);
-    key[c] = (L << 16) | colorId(tmpC, kinds[c]);
-  }
-
-  // tops: greedy rectangles of equal level and color
-  const done = new Uint8Array(S * S);
-  for (let j = -N; j < N; j++) for (let i = -N; i < N; i++) {
-    const c = at(i, j);
-    if (done[c] || level[c] === 0) continue;
-    const k = key[c];
-    let w = 1;
-    while (i + w < N && !done[at(i + w, j)] && level[at(i + w, j)] > 0 && key[at(i + w, j)] === k) w++;
-    let h = 1;
-    outer: while (j + h < N) {
-      for (let a = 0; a < w; a++) { const cc = at(i + a, j + h); if (done[cc] || level[cc] === 0 || key[cc] !== k) break outer; }
-      h++;
-    }
-    for (let b = 0; b < h; b++) for (let a = 0; a < w; a++) done[at(i + a, j + b)] = 1;
-    const top = levelTop(level[c]), x0 = i * CELL - half, x1 = (i + w - 1) * CELL + half, z0 = j * CELL - half, z1 = (j + h - 1) * CELL + half;
-    quad(x0, top, z0, x0, top, z1, x1, top, z1, x1, top, z0, 0, 1, 0, palette[k & 0xffff]);
-  }
-
-  // walls: one per level drop between neighbours, merged along runs of equal height and color
-  const hi = new THREE.Color(), lo = new THREE.Color();
-  const emitWall = (dir, i0, j0, len, L, nl, cid) => {
-    const top = levelTop(L), bottom = nl === 0 ? SEA_BOTTOM : levelTop(nl), kind = paletteKind[cid];
-    wallColor(kind, hi).multiplyScalar(0.9);
-    lo.copy(hi).multiplyScalar(nl === 0 ? 0.86 : 0.78);
-    const fringe = (kind === KIND.GRASS || kind === KIND.MEADOW) ? palette[cid] : null;
-    const x = i0 * CELL, z = j0 * CELL;
-    if (dir === 0) { const xa = x + half, za = z - half, zb = z - half + len * CELL; wallQuad(xa, bottom, za, xa, top, za, xa, top, zb, xa, bottom, zb, 1, 0, 0, hi, lo, fringe); }
-    else if (dir === 1) { const xa = x - half, zb = z - half, za = z - half + len * CELL; wallQuad(xa, bottom, za, xa, top, za, xa, top, zb, xa, bottom, zb, -1, 0, 0, hi, lo, fringe); }
-    else if (dir === 2) { const za = z + half, xa = x - half + len * CELL, xb = x - half; wallQuad(xa, bottom, za, xa, top, za, xb, top, za, xb, bottom, za, 0, 0, 1, hi, lo, fringe); }
-    else { const za = z - half, xa = x - half, xb = x - half + len * CELL; wallQuad(xa, bottom, za, xa, top, za, xb, top, za, xb, bottom, za, 0, 0, -1, hi, lo, fringe); }
-  };
-  const wallKey = (c, n) => { const L = level[c], nl = n < 0 ? 0 : level[n]; return nl < L ? ((L << 24) | (nl << 12) | (key[c] & 0xfff)) : -1; };
-  const neighbour = (i, j) => (i >= -N && i < N && j >= -N && j < N) ? at(i, j) : -1;
-  for (let dir = 0; dir < 4; dir++) {
-    const di = dir === 0 ? 1 : dir === 1 ? -1 : 0, dj = dir === 2 ? 1 : dir === 3 ? -1 : 0;
-    const alongJ = dir < 2;   // ±x walls run along j, ±z walls along i
-    for (let u = -N; u < N; u++) {
-      let run = -1, runStart = 0, runLen = 0;
-      for (let v = -N; v <= N; v++) {
-        let k = -1;
-        if (v < N) {
-          const i = alongJ ? u : v, j = alongJ ? v : u;
-          const c = at(i, j);
-          if (level[c] > 0) k = wallKey(c, neighbour(i + di, j + dj));
-        }
-        if (k === run && k !== -1) { runLen++; continue; }
-        if (run !== -1) emitWall(dir, alongJ ? u : runStart, alongJ ? runStart : u, runLen, run >> 24, (run >> 12) & 0xfff, run & 0xfff);
-        run = k; runStart = v; runLen = 1;
-      }
-    }
-  }
-
-  // shallows: a foam ring around every coastline, sitting just above the swell, merged along runs
-  const foam = new THREE.Color(0xd8fff7);
-  for (let j = -N; j < N; j++) {
-    let start = -1;
-    for (let i = -N; i <= N; i++) {
-      let ring = false;
-      if (i < N && level[at(i, j)] === 0) ring = levelAtCell(i + 1, j) > 0 || levelAtCell(i - 1, j) > 0 || levelAtCell(i, j + 1) > 0 || levelAtCell(i, j - 1) > 0;
-      if (ring && start < 0) start = i;
-      if (!ring && start >= 0) { const x0 = start * CELL - half, x1 = (i - 1) * CELL + half, z = j * CELL, y = 0.5; quad(x0, y, z - half, x0, y, z + half, x1, y, z + half, x1, y, z - half, 0, 1, 0, foam); start = -1; }
-    }
-  }
-
+// ---------------------------------------------------------------- terrain (geometry from bake.js, material here)
+function buildTerrain(chunks, occlusion) {
   const mat = new THREE.MeshStandardNodeMaterial({ roughness: 0.95 });
-  bakeOcclusion();
+  occlusionTexture(occlusion);
   const baked = bakeSample();
   // ambient occlusion from the bake on the indirect light, plus a touch on the albedo so creases read in full sun
   mat.aoNode = baked.r;
@@ -247,23 +63,19 @@ function buildTerrain() {
   const sunLit = float(1).sub(float(1).sub(tslDot(baked.gba, bake.sel)).mul(0.9));
   mat.receivedShadowNode = Fn(([sh]) => sh.mul(mix(float(1), sunLit, far)));
   const land = new THREE.Group();
-  let vertices = 0;
   for (const c of chunks) {
-    if (!c.idx.length) continue;
     const geo = new THREE.BufferGeometry();
-    geo.setAttribute('position', new THREE.Float32BufferAttribute(c.pos, 3));
-    geo.setAttribute('normal', new THREE.Float32BufferAttribute(c.nrm, 3));
-    geo.setAttribute('color', new THREE.Float32BufferAttribute(c.colr, 3));
-    geo.setAttribute('lip', new THREE.Float32BufferAttribute(c.lip, 1));
-    geo.setAttribute('topcol', new THREE.Float32BufferAttribute(c.topcol, 3));
-    geo.setIndex(c.idx);
+    geo.setAttribute('position', new THREE.BufferAttribute(c.position, 3));
+    geo.setAttribute('normal', new THREE.BufferAttribute(c.normal, 3));
+    geo.setAttribute('color', new THREE.BufferAttribute(c.color, 3));
+    geo.setAttribute('lip', new THREE.BufferAttribute(c.lip, 1));
+    geo.setAttribute('topcol', new THREE.BufferAttribute(c.topcol, 3));
+    geo.setIndex(new THREE.BufferAttribute(c.index, 1));
     const mesh = new THREE.Mesh(geo, mat);
     mesh.receiveShadow = true;
     mesh.castShadow = true;
     land.add(mesh);
-    vertices += c.pos.length / 3;
   }
-  console.info(`terrain: ${vertices} vertices in ${land.children.length} chunks`);
   return land;
 }
 
@@ -339,52 +151,16 @@ function buildFreshWater(material) {
 }
 
 // ---------------------------------------------------------------- water
-// The water's three noises (gusts, the shimmer of the shallows, the foam's edge) are 3D Perlin noise over (x, z, time).
-// Evaluated in the shader that is eight hashed gradients and a quintic blend, three times over, on every pixel of
-// the sea. Here the same noise is evaluated once, at load, into a volume that tiles in all three axes, and the shader
-// reads it with one filtered sample each. 32 lattice cells across at 8 texels a cell, 8 cells deep in time at 4.
-const NOISE = { cells: 32, cellsT: 8, size: 256, sizeT: 32, tex: null };
-function bakeNoise() {
-  const t0 = performance.now();
-  const { cells, cellsT, size, sizeT } = NOISE;
-  const r = mulberry32(90210), perm = new Uint8Array(512);
-  for (let i = 0; i < 256; i++) perm[i] = i;
-  for (let i = 255; i > 0; i--) { const j = Math.floor(r() * (i + 1)), t = perm[i]; perm[i] = perm[j]; perm[j] = t; }
-  for (let i = 0; i < 256; i++) perm[i + 256] = perm[i];
-  const grad = (h, x, y, z) => { h &= 15; const u = h < 8 ? x : y, v = h < 4 ? y : (h === 12 || h === 14 ? x : z); return ((h & 1) ? -u : u) + ((h & 2) ? -v : v); };
-  // per axis, per texel: the lattice cell (wrapped to the period), the cell after it, the offset into it and its fade
-  const axis = (n, period) => {
-    const i0 = new Uint8Array(n), i1 = new Uint8Array(n), f = new Float32Array(n), w = new Float32Array(n);
-    for (let k = 0; k < n; k++) { const c = (k + 0.5) * period / n, i = Math.floor(c), t = c - i; i0[k] = i % period; i1[k] = (i + 1) % period; f[k] = t; w[k] = t * t * t * (t * (t * 6 - 15) + 10); }
-    return { i0, i1, f, w };
-  };
-  const X = axis(size, cells), Z = axis(sizeT, cellsT);
-  const data = new Uint16Array(size * size * sizeT), half = THREE.DataUtils.toHalfFloat;
-  let o = 0;
-  for (let c = 0; c < sizeT; c++) {
-    const zf = Z.f[c], zw = Z.w[c], pz0 = Z.i0[c], pz1 = Z.i1[c];
-    for (let b = 0; b < size; b++) {
-      const yf = X.f[b], yw = X.w[b], py0 = perm[X.i0[b]], py1 = perm[X.i1[b]];
-      for (let a = 0; a < size; a++) {
-        const xf = X.f[a], xw = X.w[a], px0 = X.i0[a], px1 = X.i1[a];
-        const h00 = perm[perm[px0 + py0 & 255] + pz0], h10 = perm[perm[px1 + py0 & 255] + pz0], h01 = perm[perm[px0 + py1 & 255] + pz0], h11 = perm[perm[px1 + py1 & 255] + pz0];
-        const k00 = perm[perm[px0 + py0 & 255] + pz1], k10 = perm[perm[px1 + py0 & 255] + pz1], k01 = perm[perm[px0 + py1 & 255] + pz1], k11 = perm[perm[px1 + py1 & 255] + pz1];
-        const n00 = grad(h00, xf, yf, zf), n10 = grad(h10, xf - 1, yf, zf), n01 = grad(h01, xf, yf - 1, zf), n11 = grad(h11, xf - 1, yf - 1, zf);
-        const m00 = grad(k00, xf, yf, zf - 1), m10 = grad(k10, xf - 1, yf, zf - 1), m01 = grad(k01, xf, yf - 1, zf - 1), m11 = grad(k11, xf - 1, yf - 1, zf - 1);
-        const lo = n00 + (n10 - n00) * xw, hi = n01 + (n11 - n01) * xw, near = lo + (hi - lo) * yw;
-        const lo2 = m00 + (m10 - m00) * xw, hi2 = m01 + (m11 - m01) * xw, far = lo2 + (hi2 - lo2) * yw;
-        data[o++] = half((near + (far - near) * zw) * 0.982);
-      }
-    }
-  }
-  const tex = new THREE.Data3DTexture(data, size, size, sizeT);
+// The water's three noises are read from a tiling volume baked at load (bake.js).
+let noiseTex = null;
+function noiseTexture(data) {
+  const tex = new THREE.Data3DTexture(data, NOISE.size, NOISE.size, NOISE.sizeT);
   tex.format = THREE.RedFormat; tex.type = THREE.HalfFloatType;
   tex.magFilter = tex.minFilter = THREE.LinearFilter; tex.wrapS = tex.wrapT = tex.wrapR = THREE.RepeatWrapping; tex.needsUpdate = true;
-  NOISE.tex = tex;
-  console.info(`baked water noise: ${size}x${size}x${sizeT} in ${Math.round(performance.now() - t0)} ms`);
+  noiseTex = tex;
 }
 /** Perlin noise in -1..1 at `p` (x, z, time, in lattice cells), read from the baked volume. */
-const waterNoise = (p) => texture3D(NOISE.tex, p.div(vec3(NOISE.cells, NOISE.cells, NOISE.cellsT))).r;
+const waterNoise = (p) => texture3D(noiseTex, p.div(vec3(NOISE.cells, NOISE.cells, NOISE.cellsT))).r;
 
 // Directional wave set: [dirX, dirZ, wavenumber, amplitude, speed]. Slopes are analytic so the normal is exact.
 const WAVES = [
@@ -409,8 +185,8 @@ function waveSlopes(P, detailFade) {
 // which is a third of the frame's draw calls the mirror used to spend on pixels it never showed.
 export const MIRROR_LAYER = 1;
 
-function buildWater({ mobile, camera, sunDirUniform, tod }) {
-  bakeNoise();
+function buildWater({ mobile, camera, sunDirUniform, tod, noise }) {
+  noiseTexture(noise);
   const size = 4800, seg = 240;
   // Geometry stays in the XY plane and the mesh is rotated, so the reflector can read the plane from the object.
   const geo = new THREE.PlaneGeometry(size, size, seg, seg);
@@ -955,7 +731,10 @@ function buildProps(scene, lit, glow) {
 }
 
 // ---------------------------------------------------------------- assemble
-export function createWorld(scene, { mobile, lit, glow, soft, camera }) {
+/** `pre` is the world being prepared off the page (prepare.js): promises of the grid, the land, its baked light and
+ *  the water's noise. */
+export async function createWorld(scene, { mobile, lit, glow, soft, camera }, pre) {
+  await pre.grid;
   const sunDirUniform = uniform(SUN_DIR.clone());
   const tod = { skyTop: uniform(new THREE.Color(TIMES.noon.skyTop)), skyMid: uniform(new THREE.Color(TIMES.noon.skyMid)), horizon: uniform(new THREE.Color(TIMES.noon.horizon)), glow: uniform(new THREE.Color(TIMES.noon.glow)), fog: uniform(new THREE.Color(TIMES.noon.fog)) };
 
@@ -985,10 +764,9 @@ export function createWorld(scene, { mobile, lit, glow, soft, camera }) {
     .mul(mix(float(1), float(0.5), smoothstep(float(0), float(320), positionWorld.y)));
   scene.fogNode = fog(tod.fog, farFog.add(haze.mul(float(1).sub(farFog))));
 
-  const terrain = buildTerrain();
+  // Built in the order the prepared pieces arrive: first everything that needs only the grid, while the workers
+  // are still meshing the land and baking its light, then the water, then the land itself.
   const seafloor = buildSeafloor();
-  const water = buildWater({ mobile, camera, sunDirUniform, tod });
-  const fresh = buildFreshWater(water.lakeMaterial);
   const sky = buildSky(sunDirUniform, tod);
   const sunSlot = glow.alloc();
   glow.color(sunSlot, 0xfff3d6); glow.scalar(sunSlot, 4);
@@ -997,6 +775,9 @@ export function createWorld(scene, { mobile, lit, glow, soft, camera }) {
   const landmarks = buildLandmarks(lit, glow);
   const arenas = findArenas(props.villages);
   const bounds = buildBounds();
+  const water = buildWater({ mobile, camera, sunDirUniform, tod, noise: await pre.noise });
+  const fresh = buildFreshWater(water.lakeMaterial);
+  const terrain = buildTerrain(await pre.land, await pre.occlusion);
   // things you can fly close past: the game sounds a rush of air for each, judged by its x, y, z and radius r
   const obstacles = [...landmarks.obstacles, ...props.balloons];
   scene.add(terrain, seafloor, water.near, water.far, fresh, sky, clouds, bounds.mesh);

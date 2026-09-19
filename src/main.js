@@ -2,6 +2,8 @@ import * as THREE from 'three/webgpu';
 import { pass, mrt, output, emissive, vec2, vec3, vec4, float, screenUV, smoothstep, mix, luminance, color, Fn, If, Loop, length } from 'three/tsl';
 import { gaussianBlur } from 'three/addons/tsl/display/GaussianBlurNode.js';
 import { createWorld } from './world.js';
+import { LIGHTS } from './times.js';
+import { prepared } from './prepare.js';
 import { Boxes } from './boxes.js';
 import { Input, isTouchDevice } from './input.js';
 import { bindTouch } from './touch.js';
@@ -20,15 +22,24 @@ const mobile = touch && Math.min(innerWidth, innerHeight) < 900;
 const PERF = new URLSearchParams(location.search).has('perf');
 
 async function boot() {
+  // The start, timed: a line in the console once the first frame is really on the screen, and on the screen itself
+  // with `?perf`, so how long the wait was (and on what) can be read without opening anything.
+  const marks = [`script ${Math.round(performance.now())}`], mark = (what) => marks.push(`${what} ${Math.round(performance.now())}`);
   const canvas = $('game');
   // No antialiasing on the canvas itself: the only thing ever drawn to it is the post pipeline's full-screen quad, and
   // four samples of a quad are four times the bandwidth for the same picture. The scene pass below asks for its own.
   const renderer = new THREE.WebGPURenderer({ canvas, antialias: false, powerPreference: 'high-performance', trackTimestamp: import.meta.env.DEV });
   await renderer.init();
+  mark('renderer');
   // If the GPU device goes away (driver reset, tab throttled to death) the canvas would just freeze: say so instead.
   renderer.backend.device?.lost?.then((info) => { if (info.reason !== 'destroyed') fatal('The graphics device was lost', info.message || 'The browser reset the GPU.'); }).catch(() => {});
   canvas.addEventListener('webglcontextlost', (e) => { e.preventDefault(); fatal('The graphics context was lost', 'The browser reset the GPU.'); });
-  let ratio = Math.min(devicePixelRatio, mobile ? 1.5 : 2);
+  // The picture's pixel ratio: the screen's own up to 2 (1.5 on a phone), less the step or two you may have taken
+  // off it with R, which is remembered.
+  const deviceRatio = Math.min(devicePixelRatio, mobile ? 1.5 : 2);
+  let trim = Math.min(0.5, Number(store.get('skyfight.trim')) || 0);
+  const ceiling = () => Math.max(1, deviceRatio - trim);
+  let ratio = ceiling();
   renderer.setPixelRatio(ratio);
   // The canvas element is sized by its stylesheet (it always fills the screen); only the drawing buffer follows the
   // window here, so a stale size during a phone's rotation can never leave bars beside the picture.
@@ -45,8 +56,9 @@ async function boot() {
   const lit = new Boxes(scene, 12000);
   const glow = new Boxes(scene, 1400, { glow: true });
   const soft = new Boxes(scene, 64, { soft: true });     // translucent discs and rings: prop blur, splashes, the vapour cone
-  const world = createWorld(scene, { mobile, lit, glow, soft, camera });
-  world.setTimeOfDay(['morning', 'noon', 'golden'][dailySeed() % 3]);   // the title wears today's light
+  const world = await createWorld(scene, { mobile, lit, glow, soft, camera }, prepared);
+  mark('world');
+  world.setTimeOfDay(LIGHTS[dailySeed() % 3]);   // the title wears today's light
 
   // Post-processing: scene pass with an emissive MRT target so only tracers, flashes and the sun glow.
   const scenePass = pass(scene, camera, { samples: 4 });
@@ -254,26 +266,60 @@ async function boot() {
 
   // Compile the play graph once up front so the first shot fired doesn't stall on a shader build.
   pipeline.render();
+  // ... and the title's own graph (its depth of field), so the first frame of the loop does not stall on one either.
   useTitleLens(true);
+  pipeline.render();
+  mark('first frame sent');
+  // Sent is not seen: the GPU is still building pipelines, and while it is, anything that moves on the page stutters
+  // with it. So nothing moves: the canvas stays under its veil of sky (start.js) and the title's prompts stay away
+  // until the queue has drained. Then it all arrives together, the picture, the letters, and the prompts with every
+  // line of theirs already filled in.
+  const seen = renderer.backend.device ? renderer.backend.device.queue.onSubmittedWorkDone() : Promise.resolve();
+  seen.catch(() => {}).then(() => requestAnimationFrame(() => {
+    mark('seen');
+    const pt = prepared.times, line = `workers ${pt.workers} (grid ${pt.grid}, land and light ${pt.world}, on ${pt.on}) · ${marks.join(' · ')}`;
+    console.info(`start (ms): ${line}`);
+    if (PERF) hud.notice(`start · ${line}`, 20000);
+    document.body.classList.add('ready');
+    const veil = $('veil');
+    veil.classList.add('gone');
+    setTimeout(() => veil.remove(), 900);
+  }));
 
   // Dynamic resolution: eight long frames in a row shrink the drawing buffer a step, ten seconds of headroom grow it
   // back, so a hot machine keeps its frame rate rather than its pixels. A phone may go down to a pixel ratio of 1. A
   // laptop never goes below 1.5 (a fanless one loses a third of its GPU clock after a minute of play, and this is
-  // the net under that), and if five seconds at the floor are still slow then pixels were never the problem (a
-  // browser holding the page to 30 Hz to save the battery, say): they are given back and left alone.
-  const fullRatio = ratio, floorRatio = Math.min(ratio, mobile ? 1 : 1.5);
-  let slow = 0, fast = 0, stuck = 0, adaptive = true;
+  // the net under that). If five seconds at the floor are still slow then pixels were never the problem, and a
+  // laptop gets them back and is left alone. When those frames sat at a steady thirtieth of a second the likeliest
+  // cause is a browser or a system holding the page to 30 frames a second to save the battery, which nothing here
+  // can lift, so the game says so, once.
+  const floor = () => Math.min(ceiling(), mobile ? 1 : 1.5);
+  let slow = 0, fast = 0, stuck = 0, at30 = 0, adaptive = true, told = false;
+  const resize = (r) => { ratio = r; renderer.setPixelRatio(ratio); fit(); };
   const resolution = (frame) => {
-    if (!adaptive || game.state !== 'playing') return;
+    if (game.state !== 'playing') return;
     const long = frame > 1 / 45;
     slow = long ? slow + 1 : 0; fast = long ? 0 : fast + 1;
-    if (!mobile && ratio <= floorRatio && ratio < fullRatio) stuck = long ? stuck + 1 : Math.max(0, stuck - 1);
-    if (stuck > 300) { ratio = fullRatio; adaptive = false; }
-    else if (slow >= 8 && ratio > floorRatio) { ratio = Math.max(floorRatio, ratio - 0.25); slow = 0; }
-    else if (fast >= 600 && ratio < fullRatio) { ratio = Math.min(fullRatio, ratio + 0.25); fast = 0; }
-    else return;
-    renderer.setPixelRatio(ratio); fit();
+    if (ratio <= floor() && long) { stuck++; if (frame > 0.03 && frame < 0.037) at30++; } else { stuck = Math.max(0, stuck - 1); at30 = Math.max(0, at30 - 1); }
+    if (stuck > 150 && !told) {
+      told = true;
+      if (at30 > stuck * 0.8) hud.notice('30 fps · if on battery, check Energy Saver / Low Power Mode', 9000);
+      if (!mobile) { adaptive = false; resize(ceiling()); }
+    } else if (!adaptive) return;
+    else if (slow >= 8 && ratio > floor()) { slow = 0; resize(Math.max(floor(), ratio - 0.25)); }
+    else if (fast >= 600 && ratio < ceiling()) { fast = 0; resize(Math.min(ceiling(), ratio + 0.25)); }
   };
+  // R trades pixels for headroom by hand: full, a quarter step down, a half step down, and round again. On a
+  // Retina panel under four samples a pixel the steps are hard to tell apart, and each is about a seventh less work
+  // for the GPU; whether they are the same picture is for the eye that is looking at it, so it is a key and not a
+  // default. The choice is kept, and the dynamic resolution above works beneath it.
+  addEventListener('keydown', (e) => {
+    if (e.code !== 'KeyR' || e.repeat || e.metaKey || e.ctrlKey) return;
+    trim = trim >= 0.5 || deviceRatio - trim - 0.25 < 1 ? 0 : trim + 0.25;
+    store.set('skyfight.trim', String(trim));
+    resize(ceiling());
+    hud.notice(`Resolution ${ratio}× · ${renderer.domElement.width} × ${renderer.domElement.height}${trim ? '' : ' · full'}`, 2500);
+  });
   // The frame meter: frames a second, the longest frame of the last half second, the script's share of a frame and
   // the size of the picture. Off, it costs two clock reads a frame.
   const meter = { el: null, on: false, frames: 0, since: performance.now(), worst: 0, cpu: 0 };
@@ -294,7 +340,14 @@ async function boot() {
   let last = performance.now();
   let acc = 0;
   const STEP = 1 / 120;
+  // Nobody at the controls: on the title or the debrief, twenty seconds without a key or a pointer (or the
+  // window not in front) drops the picture to every other frame. The slow orbit looks the same at half the rate, and
+  // a fanless laptop left on the title is not already warm when the run starts.
+  let touched = performance.now(), skip = false;
+  for (const ev of ['keydown', 'pointerdown', 'pointermove', 'wheel', 'touchstart']) addEventListener(ev, () => { touched = performance.now(); }, { passive: true });
   renderer.setAnimationLoop((now) => {
+    const resting = game.state !== 'playing' && game.state !== 'dead' && (performance.now() - touched > 20000 || !document.hasFocus());
+    if (resting && (skip = !skip)) return;
     const began = performance.now(), sinceLast = now - last;
     let frame = Math.min(0.05, sinceLast / 1000);
     last = now;
