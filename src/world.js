@@ -1,9 +1,9 @@
 import * as THREE from 'three/webgpu';
 import {
   color, positionLocal, positionWorld, normalize, mix, smoothstep, dot, float, vec2, vec3, attribute, time, sin, cos,
-  saturate, pow, uniform, fog, rangeFogFactor, instanceIndex, hash, cameraPosition, reflect, transformNormalToView, mx_noise_float, reflector, uv, abs, fract, mod, max as tslMax, min as tslMin, length, exp, floor, select, normalWorld, vertexColor, step, dot as tslDot, luminance, positionView, texture, Fn,
+  saturate, pow, uniform, fog, rangeFogFactor, instanceIndex, hash, cameraPosition, reflect, transformNormalToView, reflector, uv, texture3D, abs, fract, mod, max as tslMax, min as tslMin, length, exp, floor, select, normalWorld, vertexColor, step, dot as tslDot, luminance, positionView, texture, Fn,
 } from 'three/tsl';
-import { ensureGrid, heightAt, levelAtCell, cellKind, cellWater, cellTop, levelTop, isSeaAt, KIND, N as HALF_CELLS, CELL, BOUNDS, SCALE } from './terrain.js';
+import { ensureGrid, heightAt, levelAtCell, cellKind, cellWater, cellTop, levelTop, isSeaAt, KIND, N as HALF_CELLS, CELL, BOUNDS, SCALE, WORLD_SIZE } from './terrain.js';
 import { Boxes, local } from './boxes.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { Trails } from './trails.js';
@@ -124,21 +124,32 @@ function bakeSample() {
 function buildTerrain() {
   ensureGrid();
   const N = HALF_CELLS;
-  const pos = [], nrm = [], colr = [], lip = [], topcol = [];
+  // The land is cut into a 4x4 grid of meshes so each pass draws only the part it can see: the shadow map covers a
+  // sixteenth of the map, the view and the water's mirror about half. A quad belongs to the chunk its first corner
+  // is in (a long merged run may reach into the next one; the chunk's bounds are measured from what it holds).
+  // Four corners and six indices a quad.
+  const CHUNKS = 4, chunkSize = WORLD_SIZE / CHUNKS;
+  const chunks = Array.from({ length: CHUNKS * CHUNKS }, () => ({ pos: [], nrm: [], colr: [], lip: [], topcol: [], idx: [] }));
+  const chunkAt = (x, z) => chunks[THREE.MathUtils.clamp(Math.floor((x + WORLD_SIZE / 2) / chunkSize), 0, CHUNKS - 1) * CHUNKS + THREE.MathUtils.clamp(Math.floor((z + WORLD_SIZE / 2) / chunkSize), 0, CHUNKS - 1)];
   const NO_LIP = -1000;
+  const corners = (c, ax, ay, az, bx, by, bz, cx, cy, cz, dx, dy, dz, nx, ny, nz) => {
+    const v = c.pos.length / 3;
+    c.pos.push(ax, ay, az, bx, by, bz, cx, cy, cz, dx, dy, dz);
+    c.nrm.push(nx, ny, nz, nx, ny, nz, nx, ny, nz, nx, ny, nz);
+    c.idx.push(v, v + 1, v + 2, v, v + 2, v + 3);
+  };
   const quad = (ax, ay, az, bx, by, bz, cx, cy, cz, dx, dy, dz, nx, ny, nz, col) => {
-    pos.push(ax, ay, az, bx, by, bz, cx, cy, cz, ax, ay, az, cx, cy, cz, dx, dy, dz);
-    for (let k = 0; k < 6; k++) { nrm.push(nx, ny, nz); colr.push(col.r, col.g, col.b); lip.push(NO_LIP); topcol.push(0, 0, 0); }
+    const c = chunkAt(ax, az);
+    corners(c, ax, ay, az, bx, by, bz, cx, cy, cz, dx, dy, dz, nx, ny, nz);
+    for (let k = 0; k < 4; k++) { c.colr.push(col.r, col.g, col.b); c.lip.push(NO_LIP); c.topcol.push(0, 0, 0); }
   };
   // Wall quad with per-vertex color: a/d are the bottom corners (lo color), b/c the top corners (hi color).
   // `fringe` is the top face's color when grass should hang over the lip, else null.
   const wallQuad = (ax, ay, az, bx, by, bz, cx, cy, cz, dx, dy, dz, nx, ny, nz, hi, lo, fringe) => {
-    pos.push(ax, ay, az, bx, by, bz, cx, cy, cz, ax, ay, az, cx, cy, cz, dx, dy, dz);
-    const cols = [lo, hi, hi, lo, hi, lo];
-    for (let k = 0; k < 6; k++) {
-      nrm.push(nx, ny, nz); colr.push(cols[k].r, cols[k].g, cols[k].b);
-      lip.push(fringe ? by : NO_LIP); topcol.push(fringe ? fringe.r : 0, fringe ? fringe.g : 0, fringe ? fringe.b : 0);
-    }
+    const c = chunkAt(ax, az);
+    corners(c, ax, ay, az, bx, by, bz, cx, cy, cz, dx, dy, dz, nx, ny, nz);
+    c.colr.push(lo.r, lo.g, lo.b, hi.r, hi.g, hi.b, hi.r, hi.g, hi.b, lo.r, lo.g, lo.b);
+    for (let k = 0; k < 4; k++) { c.lip.push(fringe ? by : NO_LIP); c.topcol.push(fringe ? fringe.r : 0, fringe ? fringe.g : 0, fringe ? fringe.b : 0); }
   };
   const S = 2 * N;
   const at = (i, j) => (i + N) * S + (j + N);
@@ -224,12 +235,6 @@ function buildTerrain() {
     }
   }
 
-  const geo = new THREE.BufferGeometry();
-  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-  geo.setAttribute('normal', new THREE.Float32BufferAttribute(nrm, 3));
-  geo.setAttribute('color', new THREE.Float32BufferAttribute(colr, 3));
-  geo.setAttribute('lip', new THREE.Float32BufferAttribute(lip, 1));
-  geo.setAttribute('topcol', new THREE.Float32BufferAttribute(topcol, 3));
   const mat = new THREE.MeshStandardNodeMaterial({ roughness: 0.95 });
   bakeOcclusion();
   const baked = bakeSample();
@@ -241,11 +246,25 @@ function buildTerrain() {
   const far = smoothstep(float(320), float(540), camDist);
   const sunLit = float(1).sub(float(1).sub(tslDot(baked.gba, bake.sel)).mul(0.9));
   mat.receivedShadowNode = Fn(([sh]) => sh.mul(mix(float(1), sunLit, far)));
-  const mesh = new THREE.Mesh(geo, mat);
-  mesh.receiveShadow = true;
-  mesh.castShadow = true;
-  console.info(`terrain mesh: ${pos.length / 3} vertices`);
-  return mesh;
+  const land = new THREE.Group();
+  let vertices = 0;
+  for (const c of chunks) {
+    if (!c.idx.length) continue;
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(c.pos, 3));
+    geo.setAttribute('normal', new THREE.Float32BufferAttribute(c.nrm, 3));
+    geo.setAttribute('color', new THREE.Float32BufferAttribute(c.colr, 3));
+    geo.setAttribute('lip', new THREE.Float32BufferAttribute(c.lip, 1));
+    geo.setAttribute('topcol', new THREE.Float32BufferAttribute(c.topcol, 3));
+    geo.setIndex(c.idx);
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.receiveShadow = true;
+    mesh.castShadow = true;
+    land.add(mesh);
+    vertices += c.pos.length / 3;
+  }
+  console.info(`terrain: ${vertices} vertices in ${land.children.length} chunks`);
+  return land;
 }
 
 // Block-level materiality, all in the fragment shader so flat runs of blocks can still share one quad:
@@ -320,6 +339,53 @@ function buildFreshWater(material) {
 }
 
 // ---------------------------------------------------------------- water
+// The water's three noises (gusts, the shimmer of the shallows, the foam's edge) are 3D Perlin noise over (x, z, time).
+// Evaluated in the shader that is eight hashed gradients and a quintic blend, three times over, on every pixel of
+// the sea. Here the same noise is evaluated once, at load, into a volume that tiles in all three axes, and the shader
+// reads it with one filtered sample each. 32 lattice cells across at 8 texels a cell, 8 cells deep in time at 4.
+const NOISE = { cells: 32, cellsT: 8, size: 256, sizeT: 32, tex: null };
+function bakeNoise() {
+  const t0 = performance.now();
+  const { cells, cellsT, size, sizeT } = NOISE;
+  const r = mulberry32(90210), perm = new Uint8Array(512);
+  for (let i = 0; i < 256; i++) perm[i] = i;
+  for (let i = 255; i > 0; i--) { const j = Math.floor(r() * (i + 1)), t = perm[i]; perm[i] = perm[j]; perm[j] = t; }
+  for (let i = 0; i < 256; i++) perm[i + 256] = perm[i];
+  const grad = (h, x, y, z) => { h &= 15; const u = h < 8 ? x : y, v = h < 4 ? y : (h === 12 || h === 14 ? x : z); return ((h & 1) ? -u : u) + ((h & 2) ? -v : v); };
+  // per axis, per texel: the lattice cell (wrapped to the period), the cell after it, the offset into it and its fade
+  const axis = (n, period) => {
+    const i0 = new Uint8Array(n), i1 = new Uint8Array(n), f = new Float32Array(n), w = new Float32Array(n);
+    for (let k = 0; k < n; k++) { const c = (k + 0.5) * period / n, i = Math.floor(c), t = c - i; i0[k] = i % period; i1[k] = (i + 1) % period; f[k] = t; w[k] = t * t * t * (t * (t * 6 - 15) + 10); }
+    return { i0, i1, f, w };
+  };
+  const X = axis(size, cells), Z = axis(sizeT, cellsT);
+  const data = new Uint16Array(size * size * sizeT), half = THREE.DataUtils.toHalfFloat;
+  let o = 0;
+  for (let c = 0; c < sizeT; c++) {
+    const zf = Z.f[c], zw = Z.w[c], pz0 = Z.i0[c], pz1 = Z.i1[c];
+    for (let b = 0; b < size; b++) {
+      const yf = X.f[b], yw = X.w[b], py0 = perm[X.i0[b]], py1 = perm[X.i1[b]];
+      for (let a = 0; a < size; a++) {
+        const xf = X.f[a], xw = X.w[a], px0 = X.i0[a], px1 = X.i1[a];
+        const h00 = perm[perm[px0 + py0 & 255] + pz0], h10 = perm[perm[px1 + py0 & 255] + pz0], h01 = perm[perm[px0 + py1 & 255] + pz0], h11 = perm[perm[px1 + py1 & 255] + pz0];
+        const k00 = perm[perm[px0 + py0 & 255] + pz1], k10 = perm[perm[px1 + py0 & 255] + pz1], k01 = perm[perm[px0 + py1 & 255] + pz1], k11 = perm[perm[px1 + py1 & 255] + pz1];
+        const n00 = grad(h00, xf, yf, zf), n10 = grad(h10, xf - 1, yf, zf), n01 = grad(h01, xf, yf - 1, zf), n11 = grad(h11, xf - 1, yf - 1, zf);
+        const m00 = grad(k00, xf, yf, zf - 1), m10 = grad(k10, xf - 1, yf, zf - 1), m01 = grad(k01, xf, yf - 1, zf - 1), m11 = grad(k11, xf - 1, yf - 1, zf - 1);
+        const lo = n00 + (n10 - n00) * xw, hi = n01 + (n11 - n01) * xw, near = lo + (hi - lo) * yw;
+        const lo2 = m00 + (m10 - m00) * xw, hi2 = m01 + (m11 - m01) * xw, far = lo2 + (hi2 - lo2) * yw;
+        data[o++] = half((near + (far - near) * zw) * 0.982);
+      }
+    }
+  }
+  const tex = new THREE.Data3DTexture(data, size, size, sizeT);
+  tex.format = THREE.RedFormat; tex.type = THREE.HalfFloatType;
+  tex.magFilter = tex.minFilter = THREE.LinearFilter; tex.wrapS = tex.wrapT = tex.wrapR = THREE.RepeatWrapping; tex.needsUpdate = true;
+  NOISE.tex = tex;
+  console.info(`baked water noise: ${size}x${size}x${sizeT} in ${Math.round(performance.now() - t0)} ms`);
+}
+/** Perlin noise in -1..1 at `p` (x, z, time, in lattice cells), read from the baked volume. */
+const waterNoise = (p) => texture3D(NOISE.tex, p.div(vec3(NOISE.cells, NOISE.cells, NOISE.cellsT))).r;
+
 // Directional wave set: [dirX, dirZ, wavenumber, amplitude, speed]. Slopes are analytic so the normal is exact.
 const WAVES = [
   [1.0, 0.3, 0.045, 0.9, 1.3], [-0.6, 1.0, 0.09, 0.5, 1.9], [0.8, -0.7, 0.17, 0.3, 2.6],
@@ -344,6 +410,7 @@ function waveSlopes(P, detailFade) {
 export const MIRROR_LAYER = 1;
 
 function buildWater({ mobile, camera, sunDirUniform, tod }) {
+  bakeNoise();
   const size = 4800, seg = 240;
   // Geometry stays in the XY plane and the mesh is rotated, so the reflector can read the plane from the object.
   const geo = new THREE.PlaneGeometry(size, size, seg, seg);
@@ -374,13 +441,13 @@ function buildWater({ mobile, camera, sunDirUniform, tod }) {
     reflection.reflector.virtualCameras.set(camera, mirrorCamera);
   }
 
-  const shade = (mat, d, edgeNode, useReflection) => {
+  const shade = (mat, d, edgeNode, useReflection, openSea = false) => {
     const deepMix = smoothstep(0.0, 0.7, d);
     const P = positionWorld.xz;
     const camDist = cameraPosition.sub(positionWorld).length();
     const detailFade = smoothstep(float(700), float(80), camDist);
     const { sx, sz } = waveSlopes(P, detailFade);
-    const gust = mx_noise_float(vec3(P.mul(0.012), time.mul(0.12))).mul(0.45).add(0.85);
+    const gust = waterNoise(vec3(P.mul(0.012), time.mul(0.12))).mul(0.45).add(0.85);
     const shallowCalm = mix(float(0.45), float(1.0), deepMix);
     const nW = normalize(vec3(sx.negate().mul(gust).mul(shallowCalm), 1.0, sz.negate().mul(gust).mul(shallowCalm)));
     mat.normalNode = transformNormalToView(nW);
@@ -398,11 +465,16 @@ function buildWater({ mobile, camera, sunDirUniform, tod }) {
       skyRefl = mix(skyRefl, real, smoothstep(float(2300), float(1400), camDist));
     }
     let base = mix(color(PALETTE.shallow), color(PALETTE.deep), deepMix);
-    const shimmer = mx_noise_float(vec3(P.mul(0.08), time.mul(0.45))).mul(0.5).add(0.5);
-    base = base.add(color(0xbfffee).mul(shimmer.mul(0.22)).mul(float(1).sub(deepMix)));
-    const foamBand = smoothstep(0.15, 0.0, d);
-    const foamNoise = mx_noise_float(vec3(P.mul(0.14).add(vec2(time.mul(0.25), 0)), time.mul(0.35))).mul(0.5).add(0.5);
-    const foam = foamBand.mul(smoothstep(0.3, 0.7, foamNoise.mul(0.65).add(foamBand.mul(0.5))));
+    // The shimmer lives in the shallows and the foam on the shoreline; the open sea beyond the map has neither, so
+    // its material does not pay for them.
+    let foam = float(0);
+    if (!openSea) {
+      const shimmer = waterNoise(vec3(P.mul(0.08), time.mul(0.45))).mul(0.5).add(0.5);
+      base = base.add(color(0xbfffee).mul(shimmer.mul(0.22)).mul(float(1).sub(deepMix)));
+      const foamBand = smoothstep(0.15, 0.0, d);
+      const foamNoise = waterNoise(vec3(P.mul(0.14).add(vec2(time.mul(0.25), 0)), time.mul(0.35))).mul(0.5).add(0.5);
+      foam = foamBand.mul(smoothstep(0.3, 0.7, foamNoise.mul(0.65).add(foamBand.mul(0.5))));
+    }
     const foamMix = foam.mul(0.9);
     mat.colorNode = mix(base.mul(float(1).sub(fresnel)), color(PALETTE.foam), foamMix);
     mat.emissiveNode = skyRefl.mul(fresnel).mul(float(1).sub(foamMix));
@@ -426,7 +498,7 @@ function buildWater({ mobile, camera, sunDirUniform, tod }) {
   far.rotation.x = -Math.PI / 2;
   far.position.y = 0;
   far.frustumCulled = false;
-  shade(far.material, float(1), float(0), false);
+  shade(far.material, float(1), float(0), false, true);
   // Lakes and rivers reuse the same shading with their own depth and no swell.
   const lakeMaterial = new THREE.MeshStandardNodeMaterial({ roughness: 0.2, metalness: 0.0, transparent: true });
   shade(lakeMaterial, attribute('depth', 'float'), float(0), false);
@@ -485,6 +557,22 @@ function buildSeafloor() {
   }
   geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
   geo.computeVertexNormals();
+  // The sea is opaque from a depth of 12 (see the water's opacity), so the floor under deep water is lit and shaded
+  // on every pixel of open sea and never seen. Keep the quads that reach above -30, and two rings of their
+  // neighbours for the slopes between this grid and the water's.
+  const row = seg + 1, keep = new Uint8Array(seg * seg);
+  for (let b = 0; b < seg; b++) for (let a = 0; a < seg; a++) {
+    const v = b * row + a;
+    if (Math.max(heightAt(p.getX(v), p.getZ(v)), heightAt(p.getX(v + 1), p.getZ(v + 1)), heightAt(p.getX(v + row), p.getZ(v + row)), heightAt(p.getX(v + row + 1), p.getZ(v + row + 1))) > -30) keep[b * seg + a] = 1;
+  }
+  const src = geo.index.array, idx = [];
+  for (let b = 0; b < seg; b++) for (let a = 0; a < seg; a++) {
+    let near = false;
+    for (let db = -2; db <= 2 && !near; db++) for (let da = -2; da <= 2 && !near; da++) { const bb = b + db, aa = a + da; near = bb >= 0 && bb < seg && aa >= 0 && aa < seg && keep[bb * seg + aa] === 1; }
+    if (near) { const o = (b * seg + a) * 6; for (let k = 0; k < 6; k++) idx.push(src[o + k]); }
+  }
+  console.info(`seafloor: ${idx.length / 6} of ${seg * seg} quads kept`);
+  geo.setIndex(idx);
   const mesh = new THREE.Mesh(geo, new THREE.MeshStandardNodeMaterial({ vertexColors: true, roughness: 1 }));
   mesh.receiveShadow = true;
   return mesh;
@@ -912,7 +1000,7 @@ export function createWorld(scene, { mobile, lit, glow, soft, camera }) {
   // things you can fly close past: the game sounds a rush of air for each, judged by its x, y, z and radius r
   const obstacles = [...landmarks.obstacles, ...props.balloons];
   scene.add(terrain, seafloor, water.near, water.far, fresh, sky, clouds, bounds.mesh);
-  for (const o of [terrain, sky, clouds, lit.mesh, glow.mesh, props.leaves]) o.layers.enable(MIRROR_LAYER);
+  for (const o of [...terrain.children, sky, clouds, lit.mesh, glow.mesh, props.leaves]) o.layers.enable(MIRROR_LAYER);
 
   // Where the sun sits on screen, for the sun shafts: strength fades as it leaves the frame and is 0 behind us.
   const sunScreen = { uv: uniform(new THREE.Vector2(0.5, 0.5)), strength: uniform(0) };
@@ -937,7 +1025,7 @@ export function createWorld(scene, { mobile, lit, glow, soft, camera }) {
   // the last displayed frame. The rotation smears everything equally; the translation is divided by each pixel's
   // depth in the shader, so near ground streaks past while far isles and sky barely move. It only switches on past
   // a threshold of turn rate or speed, then follows the projected motion. A 180 degree shutter, softened.
-  const smear = { shift: uniform(new THREE.Vector2()), roll: uniform(0), trans: uniform(new THREE.Vector3()), fy: uniform(1), aspect: uniform(1) };
+  const smear = { on: uniform(0), shift: uniform(new THREE.Vector2()), roll: uniform(0), trans: uniform(new THREE.Vector3()), fy: uniform(1), aspect: uniform(1) };
   const prevCamQ = new THREE.Quaternion(), prevCamP = new THREE.Vector3(), dq = new THREE.Quaternion(), camInv = new THREE.Quaternion(), dp = new THREE.Vector3();
   let smearReady = false;
   const lightRight = new THREE.Vector3().crossVectors(new THREE.Vector3(0, 1, 0), SUN_DIR).normalize();
@@ -964,6 +1052,7 @@ export function createWorld(scene, { mobile, lit, glow, soft, camera }) {
       gate = Math.max(THREE.MathUtils.smoothstep(omega, 0.6, 1.6), THREE.MathUtils.smoothstep(v, 85, 115)) * 0.35;
       if (turn > 0.5 || dp.length() > 45) gate = 0;   // a cut (kill cam in or out, a restart) is not motion
     }
+    smear.on.value = gate > 0 ? 1 : 0;
     if (gate > 0) {
       smear.shift.value.set(2 * dq.y * fy * gate, -2 * dq.x * fy * gate);   // yaw and pitch: the whole frame slides
       smear.roll.value = 2 * dq.z * gate;                                    // roll: the frame swirls about the centre

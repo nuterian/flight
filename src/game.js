@@ -20,6 +20,7 @@ const WORLD_UP = new THREE.Vector3(0, 1, 0), NEG_Z = new THREE.Vector3(0, 0, -1)
 const SOUND_OF_SPEED = 340;   // what the Doppler shift of a passing engine is measured against, in units per second
 // where the ground is felt from: under the plane, off each wingtip, and ahead where a cliff would be
 const RUSH_TAPS = [[0, 0], [0, 12], [0, -12], [26, 0], [30, 14], [30, -14]];
+const CUSHION_LOOK = [40, 80, 120, 160];   // how far ahead along the flight path the ground cushion looks
 const rnd = (a, b) => a + Math.random() * (b - a);
 const MAX_ENEMIES = 9;
 const TWO_PI = Math.PI * 2;
@@ -65,6 +66,7 @@ export class Game {
       this.enemies.push({ ac, brain: new EnemyBrain(ac, 0.5) });
     }
 
+    this.leadPoint = new THREE.Vector3();   // where to aim at the nearest bandit, rewritten each frame
     this.camQuat = new THREE.Quaternion();
     this.camPos = new THREE.Vector3();
     this.deathBack = new THREE.Vector3(0, 0, 1);
@@ -489,7 +491,7 @@ export class Game {
       // untouched; it fades out by wave 7.
       if (this.learn > 0 && p.speed > 1) {
         let pred = alt;
-        for (const d of [40, 80, 120, 160]) { const s = d / p.speed; pred = Math.min(pred, p.pos.y + p.velocity.y * s - groundAt(p.pos.x + p.velocity.x * s, p.pos.z + p.velocity.z * s)); }
+        for (const d of CUSHION_LOOK) { const s = d / p.speed; pred = Math.min(pred, p.pos.y + p.velocity.y * s - groundAt(p.pos.x + p.velocity.x * s, p.pos.z + p.velocity.z * s)); }
         if (pred < 12) {
           const k = this.learn * clamp((12 - pred) / 20, 0, 1);
           p.input.pitch = Math.max(p.input.pitch, k);
@@ -798,7 +800,7 @@ export class Game {
     const rel = tv2.copy(best.velocity).sub(p.velocity);
     let t = bestD / BULLET_SPEED;
     for (let i = 0; i < 3; i++) { tv.copy(best.pos).addScaledVector(rel, t); t = tv.distanceTo(p.pos) / BULLET_SPEED; }
-    const point = tv.copy(best.pos).addScaledVector(rel, t).clone();
+    const point = this.leadPoint.copy(best.pos).addScaledVector(rel, t);
     const locked = p.forward.angleTo(tv2.copy(point).sub(p.pos)) < 0.035;
     return { point, locked };
   }

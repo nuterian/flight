@@ -160,7 +160,8 @@ export class Hud {
       if (!inView && !edge) { el.style.display = 'none'; return false; }
       if (!inView) { const k = 1 / Math.max(Math.abs(x), Math.abs(y)) / (Math.hypot(x, y) || 1); x *= k * 0.9; y *= k * 0.86; }
       el.style.display = 'block';
-      el.style.left = `${(x + 1) * 0.5 * W}px`; el.style.top = `${(1 - y) * 0.5 * H}px`;
+      // `translate` moves the element on the compositor; left/top would lay the HUD out again every frame
+      el.style.translate = `${Math.round((x + 1) * W) / 2}px ${Math.round((1 - y) * H) / 2}px`;
       if (edge) { el.classList.toggle('edge', !inView); el.style.transform = inView ? 'rotate(45deg)' : `rotate(${Math.atan2(x, y) + spin}rad)`; }
       return inView;
     };

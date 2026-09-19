@@ -19,6 +19,7 @@ phone, open it in landscape and tilt to steer.
 | `I` / `C` | invert pitch / recenter tilt |
 | `T` | today's flight |
 | `M` / `Esc` | mute / quit to title |
+| `P` | frame meter (also `?perf` in the address) |
 | Gamepad | left stick flies, right trigger fires, left trigger boosts, bumpers rudder, Start / Back |
 
 Phones: tilt like a steering wheel to roll, tip the top edge toward you to climb, hold FIRE and BOOST. The `?` on the
@@ -75,6 +76,14 @@ note is generated in code.
   land reads large against the trees and the plane). Water is a
   six-wave analytic surface with a real planar reflection of the sky, land and clouds. Per-block tone, strata, grass fringes, moss and lichen
   are done in the fragment shader.
+- **Frame budget.** About 4.5 ms of GPU a frame at a MacBook Air's full Retina resolution (2940 x 1912, four
+  samples a pixel), a third less than it was for the same picture: the water's three Perlin noises are baked once
+  into a tiling volume instead of being evaluated on every pixel of the sea, the land is sixteen indexed chunks so
+  the shadow map, the mirror and the view each draw only what they can see, the seafloor exists only where the
+  water is clear enough to show it, antialiasing is spent on the scene and not on the final full-screen quad, and
+  the motion smear costs nothing when it is off. If a machine still falls behind (a fanless laptop loses a third
+  of its GPU clock once warm) the drawing buffer steps down, never below a pixel ratio of 1.5 on a laptop, and
+  steps back up when there is room.
 - **Everything is a box.** Every voxel in the game is an instance of one unit cube in a handful of batches: lit,
   palm fronds (with wind and downwash), glow (tracers, flames, the sun) and soft (prop discs, splash rings). A plane is a table of 30-odd boxes placed under its matrix each frame, control surfaces, flexing
   wingtips, retracting gear and pilot included.
@@ -111,7 +120,7 @@ note is generated in code.
 | `src/hud.js`, `src/title.js` | DOM HUD and screens, the voxel title |
 | `src/audio.js`, `src/music.js`, `src/scores.js`, `src/ks.worklet.js` | sound effects, the music engine, the two themes |
 | `src/input.js`, `src/touch.js` | keyboard, tilt and touch controls |
-| `src/dev.js` | headless test, benchmark and AI-profile hooks (dev builds only) |
+| `src/dev.js` | headless test, benchmark (`__bench`, and `__gpu` for the GPU cost of a still frame) and AI-profile hooks (dev builds only) |
 
 ## License
 

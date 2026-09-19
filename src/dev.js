@@ -9,7 +9,7 @@ import { groundAt, BOUNDS } from './terrain.js';
 import { Medals } from './medals.js';
 import { mulberry32 } from './daily.js';
 
-export function attachDevHooks({ game, input, world, camera, pipeline, renderer, boxes, useTitleLens, title, music, menuMusic }) {
+export function attachDevHooks({ game, input, world, camera, pipeline, renderer, scene, scenePass, boxes, useTitleLens, title, music, menuMusic }) {
   const frame = (seconds) => {
     if (useTitleLens) useTitleLens(game.state === 'title');
     if (menuMusic) menuMusic();
@@ -24,7 +24,7 @@ export function attachDevHooks({ game, input, world, camera, pipeline, renderer,
     pipeline.render();
   };
   window.__game = game;
-  window.__dev = { renderer, pipeline, camera, world, boxes, input, useTitleLens, title, music };
+  window.__dev = { renderer, pipeline, camera, world, scene, scenePass, boxes, input, useTitleLens, title, music };
   /** Renders bars [from, to) of the theme offline and measures it: peak, RMS, spectral flatness (1 = noise), centroid. */
   window.__analyzeMusic = async (from = 8, to = 12) => {
   const sr = 44100, STEP = 60 / music.score.bpm / 4, secs = (to - from) * 16 * STEP + 2;
@@ -238,6 +238,40 @@ export function attachDevHooks({ game, input, world, camera, pipeline, renderer,
     Math.random = realRandom;
     return { cpuMsPerFrame: +cpu.toFixed(2), wallMsPerFrame: +wall.toFixed(2), gpuTimestampMs: +gpuTs.toFixed(2), drawCalls: draws, size: [innerWidth, innerHeight, devicePixelRatio] };
   };
+  /**
+   * GPU cost of a still frame from a fixed camera, in ms (best of `runs`): no simulation, so nothing drifts between
+   * runs and a before/after comparison is good to a few percent. The poses cover the usual views: over the isles,
+   * low over open water, high and wide, and into the sun. Call from the title (`__game.abort()` first).
+   */
+  const POSES = { typical: [[-140, 150, 520], [0, 60, 0]], lowWater: [[200, 14, 1500], [0, 40, 300]], highWide: [[0, 650, 1500], [0, 0, 0]], sunward: [[-600, 120, -600], [400, 760, 400]] };
+  const focus = new THREE.Vector3();
+  window.__gpu = async (pose = 'typical', frames = 100, runs = 3) => {
+    const device = renderer.backend.device, loop = renderer._animation._animationLoop;
+    renderer.setAnimationLoop(null);
+    if (useTitleLens) useTitleLens(false);
+    const [p, l] = POSES[pose];
+    camera.position.set(...p); camera.up.set(0, 1, 0); camera.lookAt(...l); camera.fov = 62; camera.updateProjectionMatrix();
+    focus.set(...p);
+    let best = Infinity, draws = 0;
+    try {
+      for (let r = 0; r < runs; r++) {
+        if (device) await device.queue.onSubmittedWorkDone();
+        const t0 = performance.now();
+        for (let i = 0; i < frames; i++) {
+          renderer.info.reset();
+          world.update(1 / 60, 100 + i / 60, focus, camera, 100);
+          for (const b of boxes) b.flush();
+          renderer._nodes.nodeFrame.update();
+          pipeline.render();
+          draws = renderer.info.render.drawCalls;
+        }
+        if (device) await device.queue.onSubmittedWorkDone();
+        best = Math.min(best, (performance.now() - t0) / frames);
+      }
+    } finally { renderer.setAnimationLoop(loop); }
+    return { ms: +best.toFixed(2), drawCalls: draws };
+  };
+  window.__gpuAll = async (frames, runs) => { const o = {}; for (const k in POSES) o[k] = (await window.__gpu(k, frames, runs)).ms; return o; };
   /** Best of `runs` benches: robust to background load. */
   window.__benchMin = async (runs = 3, frames = 180) => {
     let best = null;

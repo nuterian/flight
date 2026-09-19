@@ -16,10 +16,14 @@ import { dailySeed } from './daily.js';
 const $ = (id) => document.getElementById(id);
 const touch = isTouchDevice();
 const mobile = touch && Math.min(innerWidth, innerHeight) < 900;
+// `?perf` in the address (or P at any time) shows the frame meter.
+const PERF = new URLSearchParams(location.search).has('perf');
 
 async function boot() {
   const canvas = $('game');
-  const renderer = new THREE.WebGPURenderer({ canvas, antialias: true, powerPreference: 'high-performance', trackTimestamp: import.meta.env.DEV });
+  // No antialiasing on the canvas itself: the only thing ever drawn to it is the post pipeline's full-screen quad, and
+  // four samples of a quad are four times the bandwidth for the same picture. The scene pass below asks for its own.
+  const renderer = new THREE.WebGPURenderer({ canvas, antialias: false, powerPreference: 'high-performance', trackTimestamp: import.meta.env.DEV });
   await renderer.init();
   // If the GPU device goes away (driver reset, tab throttled to death) the canvas would just freeze: say so instead.
   renderer.backend.device?.lost?.then((info) => { if (info.reason !== 'destroyed') fatal('The graphics device was lost', info.message || 'The browser reset the GPU.'); }).catch(() => {});
@@ -45,7 +49,7 @@ async function boot() {
   world.setTimeOfDay(['morning', 'noon', 'golden'][dailySeed() % 3]);   // the title wears today's light
 
   // Post-processing: scene pass with an emissive MRT target so only tracers, flashes and the sun glow.
-  const scenePass = pass(scene, camera);
+  const scenePass = pass(scene, camera, { samples: 4 });
   // The glow sees the emissive channel plus whatever is genuinely bright in the lit scene (snow, sunlit cloud tops,
   // glints), so light glows the way it does in the poster while ordinary terrain stays crisp. The knee that keeps
   // ordinary colour out of it is applied here, once, so the blurs below read a channel holding only what glows.
@@ -79,17 +83,22 @@ async function boot() {
   // screen. The vectors are measured in world.update, which also gates the effect behind a speed / turn threshold.
   const sm = world.smear;
   const smeared = mobile ? scenePassColor : Fn(() => {
-    const w = scenePass.getViewZNode().negate().max(0.5);              // distance in front of the camera
-    const d = screenUV.sub(0.5).mul(vec2(sm.aspect, 1));
-    let off = sm.shift.add(vec2(d.y, d.x.negate()).mul(sm.roll));
-    off = off.add(sm.trans.xy.mul(sm.fy).add(d.mul(sm.trans.z)).div(w));
-    off = off.mul(float(0.025).div(length(off).add(1e-5)).min(1));
-    off = off.mul(smoothstep(28, 40, w));                               // the plane you are flying stays crisp
-    off = vec2(off.x.div(sm.aspect), off.y);
-    const col = vec3(0).toVar();
-    const taps = 6;
-    for (let i = 0; i < taps; i++) col.addAssign(scenePassColor.sample(screenUV.add(off.mul(i / (taps - 1) - 0.5))).rgb);
-    return vec4(col.div(taps), 1);
+    const out = vec4(scenePassColor.rgb, 1).toVar();
+    // Off (a steady cruise, the title, a cut) the frame is read once and the depth not at all.
+    If(sm.on.greaterThan(0.5), () => {
+      const w = scenePass.getViewZNode().negate().max(0.5);              // distance in front of the camera
+      const d = screenUV.sub(0.5).mul(vec2(sm.aspect, 1));
+      let off = sm.shift.add(vec2(d.y, d.x.negate()).mul(sm.roll));
+      off = off.add(sm.trans.xy.mul(sm.fy).add(d.mul(sm.trans.z)).div(w));
+      off = off.mul(float(0.025).div(length(off).add(1e-5)).min(1));
+      off = off.mul(smoothstep(28, 40, w));                               // the plane you are flying stays crisp
+      off = vec2(off.x.div(sm.aspect), off.y).toVar();
+      const col = vec3(0).toVar();
+      const taps = 6;
+      for (let i = 0; i < taps; i++) col.addAssign(scenePassColor.sample(screenUV.add(off.mul(i / (taps - 1) - 0.5))).rgb);
+      out.assign(vec4(col.div(taps), 1));
+    });
+    return out;
   })();
   // Ambient occlusion is baked into the terrain vertex colors (see world.js) rather than computed per screen pixel:
   // screen-space AO showed a fixed noise lattice on the flat water while moving.
@@ -143,7 +152,7 @@ async function boot() {
   // The themes belong to the title and the debrief; in the air it is the engine, the wind and the guns.
   const menuMusic = () => { const on = game.state === 'title' || game.state === 'gameover'; if (on) music.play(); else music.stop(); };
   menuMusic();
-  if (import.meta.env.DEV) import('./dev.js').then((d) => d.attachDevHooks({ game, input, world, camera, pipeline, renderer, boxes: [lit, glow, soft], useTitleLens, title, music, menuMusic }));
+  if (import.meta.env.DEV) import('./dev.js').then((d) => d.attachDevHooks({ game, input, world, camera, pipeline, renderer, scene, scenePass, boxes: [lit, glow, soft], useTitleLens, title, music, menuMusic }));
 
   bindTouch(input, { fire: $('btn-fire'), boost: $('btn-boost'), recenter: $('btn-recenter'), stickZone: $('stickzone'), stickBase: $('stickbase'), stickKnob: $('stickknob') });
   if (touch) {
@@ -247,23 +256,47 @@ async function boot() {
   pipeline.render();
   useTitleLens(true);
 
-  // Dynamic resolution on phones: eight long frames in a row shrink the drawing buffer a step (never below a pixel
-  // ratio of 1), ten seconds of headroom grow it back, so a hot phone keeps its frame rate rather than its pixels.
-  let slow = 0, fast = 0;
+  // Dynamic resolution: eight long frames in a row shrink the drawing buffer a step, ten seconds of headroom grow it
+  // back, so a hot machine keeps its frame rate rather than its pixels. A phone may go down to a pixel ratio of 1. A
+  // laptop never goes below 1.5 (a fanless one loses a third of its GPU clock after a minute of play, and this is
+  // the net under that), and if five seconds at the floor are still slow then pixels were never the problem (a
+  // browser holding the page to 30 Hz to save the battery, say): they are given back and left alone.
+  const fullRatio = ratio, floorRatio = Math.min(ratio, mobile ? 1 : 1.5);
+  let slow = 0, fast = 0, stuck = 0, adaptive = true;
   const resolution = (frame) => {
-    if (!mobile || game.state !== 'playing') return;
+    if (!adaptive || game.state !== 'playing') return;
     const long = frame > 1 / 45;
     slow = long ? slow + 1 : 0; fast = long ? 0 : fast + 1;
-    if (slow >= 8 && ratio > 1) { ratio = Math.max(1, ratio - 0.25); slow = 0; }
-    else if (fast >= 600 && ratio < 1.5) { ratio += 0.25; fast = 0; }
+    if (!mobile && ratio <= floorRatio && ratio < fullRatio) stuck = long ? stuck + 1 : Math.max(0, stuck - 1);
+    if (stuck > 300) { ratio = fullRatio; adaptive = false; }
+    else if (slow >= 8 && ratio > floorRatio) { ratio = Math.max(floorRatio, ratio - 0.25); slow = 0; }
+    else if (fast >= 600 && ratio < fullRatio) { ratio = Math.min(fullRatio, ratio + 0.25); fast = 0; }
     else return;
     renderer.setPixelRatio(ratio); fit();
+  };
+  // The frame meter: frames a second, the longest frame of the last half second, the script's share of a frame and
+  // the size of the picture. Off, it costs two clock reads a frame.
+  const meter = { el: null, on: false, frames: 0, since: performance.now(), worst: 0, cpu: 0 };
+  const showMeter = (on) => {
+    meter.on = on;
+    if (on && !meter.el) { meter.el = document.createElement('div'); meter.el.className = 'pill'; meter.el.style.cssText = 'bottom:44px;letter-spacing:0.08em;font-variant-numeric:tabular-nums'; document.body.appendChild(meter.el); }
+    if (meter.el) meter.el.classList.toggle('hidden', !on);
+  };
+  addEventListener('keydown', (e) => { if (e.code === 'KeyP' && !e.repeat) showMeter(!meter.on); });
+  if (PERF) showMeter(true);
+  const measure = (frameMs, cpuMs, now) => {
+    meter.frames++; meter.cpu += cpuMs; if (frameMs > meter.worst) meter.worst = frameMs;
+    if (now - meter.since < 500) return;
+    const canvasEl = renderer.domElement;
+    meter.el.textContent = `${Math.round(meter.frames * 1000 / (now - meter.since))} fps · worst ${meter.worst.toFixed(1)} ms · cpu ${(meter.cpu / meter.frames).toFixed(1)} ms · ${canvasEl.width}×${canvasEl.height} @${ratio}`;
+    meter.frames = 0; meter.cpu = 0; meter.worst = 0; meter.since = now;
   };
   let last = performance.now();
   let acc = 0;
   const STEP = 1 / 120;
   renderer.setAnimationLoop((now) => {
-    let frame = Math.min(0.05, (now - last) / 1000);
+    const began = performance.now(), sinceLast = now - last;
+    let frame = Math.min(0.05, sinceLast / 1000);
     last = now;
     if (innerWidth === 0 || innerHeight === 0) return;
     resolution(frame);
@@ -281,6 +314,7 @@ async function boot() {
     title.update(frame, now / 1000, camera, game.state === 'title');
     lit.flush(); glow.flush(); soft.flush();
     pipeline.render();
+    if (meter.on) measure(sinceLast, performance.now() - began, now);
   });
 }
 
