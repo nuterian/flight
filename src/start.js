@@ -10,3 +10,4 @@ const sky = SKIES[LIGHTS[dailySeed() % 3]], hex = (c) => `#${c.toString(16).padS
 document.getElementById('veil').style.background = `linear-gradient(180deg, ${hex(sky.skyTop)} 0%, ${hex(sky.skyMid)} 68%, ${hex(sky.horizon)} 100%)`;
 
 import('./main.js').catch((err) => console.error(err));
+import('./count.js').catch(() => {});   // the page count: after the game has been asked for, never before it
