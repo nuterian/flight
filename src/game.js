@@ -76,6 +76,8 @@ export class Game {
     }
 
     this.leadPoint = new THREE.Vector3();   // where to aim at the nearest bandit, rewritten each frame
+    this.leadAngle = Infinity;              // how far off the nose that point is, in radians (Infinity: no bandit ahead)
+    this.aimAid = { friction: 0.4, pull: 1 };   // aim slowdown and pull near a bandit (see update), more on a phone
     this.camQuat = new THREE.Quaternion();
     this.camPos = new THREE.Vector3();
     this.deathBack = new THREE.Vector3(0, 0, 1);
@@ -595,6 +597,17 @@ export class Game {
       }
       // ---- player control
       p.input.pitch = inp.pitch; p.input.roll = inp.roll; p.input.yaw = inp.yaw; p.input.throttle = inp.throttle;
+      // Aim slowdown with a pull: with the lead point a few degrees off the nose the stick answers more gently, so the
+      // small corrections that put the guns on a bandit land instead of overshooting, and the nose is drawn toward the
+      // lead point, so a bandit held near the guns is followed rather than lost. A little more of both on a phone.
+      if (this.leadAngle < 0.12) {
+        const w = 1 - THREE.MathUtils.smoothstep(this.leadAngle, 0.035, 0.12), touch = inp.mode !== 'keyboard', aid = this.aimAid;
+        const s = 1 - (touch ? aid.friction * 1.35 : aid.friction) * w;
+        p.input.pitch *= s; p.input.roll *= s; p.input.yaw *= s;
+        const l = p.toLocal(this.leadPoint, tv), pull = aid.pull * (touch ? 1.25 : 1) * w;
+        p.input.pitch += clamp(Math.atan2(l.y, l.z) * 2.4 * pull, -0.4, 0.4);
+        p.input.yaw += clamp(Math.atan2(l.x, l.z) * 4.4 * pull, -0.4, 0.4);
+      }
       // --- combat zone: an invisible box. Outside it a 10 s countdown drains health, then kills.
       const outside = Math.abs(p.pos.x) > BOUNDS.half || Math.abs(p.pos.z) > BOUNDS.half || p.pos.y > BOUNDS.ceiling;
       let warning = null;
@@ -926,13 +939,14 @@ export class Game {
       const d = e.pos.distanceTo(p.pos);
       if (d < bestD && p.forward.dot(tv.copy(e.pos).sub(p.pos).normalize()) > 0.6) { best = e; bestD = d; }
     }
-    if (!best) return { point: null, locked: false };
+    if (!best) { this.leadAngle = Infinity; return { point: null, locked: false }; }
     // Solve the intercept: aim = E + (Ve - Vp) * t, t = |aim - P| / bulletSpeed, two fixed-point iterations.
     const rel = tv2.copy(best.velocity).sub(p.velocity);
     let t = bestD / BULLET_SPEED;
     for (let i = 0; i < 3; i++) { tv.copy(best.pos).addScaledVector(rel, t); t = tv.distanceTo(p.pos) / BULLET_SPEED; }
     const point = this.leadPoint.copy(best.pos).addScaledVector(rel, t);
-    const locked = p.forward.angleTo(tv2.copy(point).sub(p.pos)) < 0.035;
+    this.leadAngle = p.forward.angleTo(tv2.copy(point).sub(p.pos));
+    const locked = this.leadAngle < 0.035;
     return { point, locked };
   }
 

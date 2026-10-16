@@ -5,7 +5,7 @@ import { createWorld } from './world.js';
 import { LIGHTS } from './times.js';
 import { prepared } from './prepare.js';
 import { Boxes } from './boxes.js';
-import { Input, isTouchDevice } from './input.js';
+import { Input, isTouchDevice, SENSITIVITY } from './input.js';
 import { bindTouch } from './touch.js';
 import { Hud } from './hud.js';
 import { Game } from './game.js';
@@ -163,6 +163,17 @@ async function boot() {
     showTrack();
     trackBtn.classList.remove('pop'); void trackBtn.offsetWidth; trackBtn.classList.add('pop');
   });
+  // How quick the controls are: Gentle, Normal or Quick, cycled on the title and remembered.
+  const sensBtn = $('btn-sens');
+  input.sens = SENSITIVITY.find((s) => s.name === store.get('skyfight.sens')) || SENSITIVITY[1];
+  sensBtn.querySelector('span').textContent = input.sens.name;
+  sensBtn.addEventListener('pointerdown', (e) => {
+    e.preventDefault(); e.stopPropagation();
+    input.sens = SENSITIVITY[(SENSITIVITY.indexOf(input.sens) + 1) % SENSITIVITY.length];
+    store.set('skyfight.sens', input.sens.name);
+    sensBtn.querySelector('span').textContent = input.sens.name;
+    sensBtn.classList.remove('pop'); void sensBtn.offsetWidth; sensBtn.classList.add('pop');
+  });
   // The themes belong to the title and the debrief; in the air it is the engine, the wind and the guns.
   const menuMusic = () => { const on = game.state === 'title' || game.state === 'gameover'; if (on) music.play(); else music.stop(); };
   menuMusic();
@@ -171,7 +182,9 @@ async function boot() {
   bindTouch(input, { fire: $('btn-fire'), boost: $('btn-boost'), lock: $('btn-lock'), recenter: $('btn-recenter'), stickZone: $('stickzone'), stickBase: $('stickbase'), stickKnob: $('stickknob') });
   if (touch) {
     $('controlshint').classList.add('hidden');
-    document.querySelector('#missiles .key').classList.add('hidden');
+    // on a phone the missiles left are shown on the LOCK button itself, not in the middle of the picture
+    $('btn-lock').appendChild($('mslpips'));
+    $('missiles').classList.add('hidden');
     $('starthint').textContent = 'TAP TO FLY';
     $('gohint').textContent = 'TAP TO FLY AGAIN';
   }
@@ -373,7 +386,7 @@ async function boot() {
     resolution(frame);
     useTitleLens(game.state === 'title');
     menuMusic();
-    input.update();
+    input.update(frame);
     // Fixed-step simulation keeps the flight model identical at 60 and 120 Hz displays.
     acc += frame;
     let steps = 0;

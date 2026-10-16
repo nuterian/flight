@@ -4,6 +4,12 @@ import * as THREE from 'three/webgpu';
 
 export const isTouchDevice = () => (navigator.maxTouchPoints > 0 || 'ontouchstart' in window);
 
+/** How quick the controls are, chosen on the title and remembered. `k` scales how fast a held key builds to full
+ *  stick and how little tilt it takes; Normal is the default. */
+export const SENSITIVITY = [{ name: 'Gentle', k: 0.75 }, { name: 'Normal', k: 1 }, { name: 'Quick', k: 1.3 }];
+const RAMP = 3.4;          // a held key builds to full stick at this rate a second at Normal (about a third of a second)
+const TILT_RANGE = 0.52;   // radians of tilt for full deflection at Normal (30 degrees)
+
 export class Input {
   constructor() {
     this.pitch = 0; this.roll = 0; this.yaw = 0; this.throttle = 0; this.fire = false; this.lock = false;
@@ -13,7 +19,10 @@ export class Input {
     this.touch = { fire: false, boost: false, brake: false, lock: false, stick: null };
     this.gravity = new THREE.Vector3(0, 0, 9.8);   // smoothed, screen-oriented gravity vector
     this.neutral = { roll: 0, pitch: 0.7 };
-    this.tiltRange = 0.42;                 // radians of tilt for full deflection
+    this.sens = SENSITIVITY[1];
+    this.kb = { pitch: 0, roll: 0, yaw: 0 };   // the keyboard's stick, ramped toward the keys (see update)
+    // the tilt's gravity, smoothed by a One Euro filter per axis: steady when the phone is held still, quick when it moves
+    this.grav = [0, 1, 2].map(() => ({ x: 0, dx: 0, t: 0 }));
     this.onStart = null;                   // callback: user pressed start
     this.onMute = null;                    // callback: M pressed
     this.onAbort = null;                   // callback: Escape pressed
@@ -67,9 +76,12 @@ export class Input {
     return new Promise((resolve) => {
       let settled = false;
       const handler = (e) => {
-        const a = e.accelerationIncludingGravity;
+        const a = e.accelerationIncludingGravity, lin = e.acceleration;
         if (!a || a.x == null) return;
-        this.onMotion(a.x, a.y, a.z);
+        // the phone's own fusion (gyro and accelerometer) separates the hand's motion from gravity where it can, so a
+        // jolt of the hands does not read as tilt
+        if (lin && lin.x != null) this.onMotion(a.x - lin.x, a.y - lin.y, a.z - lin.z, e.timeStamp);
+        else this.onMotion(a.x, a.y, a.z, e.timeStamp);
         if (!settled) { settled = true; this.mode = 'tilt'; setTimeout(() => this.recenter(), 250); resolve(true); }
       };
       window.addEventListener('devicemotion', handler);
@@ -77,13 +89,10 @@ export class Input {
     });
   }
 
-  onMotion(x, y, z) {
+  onMotion(x, y, z, ms = performance.now()) {
     // iOS reports gravity with the opposite sign to Android/spec; normalize so z is positive when the screen faces up.
     const sign = (/iPhone|iPad|iPod/.test(navigator.userAgent) && !window.MSStream) ? -1 : 1;
-    const k = 0.35;
-    this.gravity.x += (x * sign - this.gravity.x) * k;
-    this.gravity.y += (y * sign - this.gravity.y) * k;
-    this.gravity.z += (z * sign - this.gravity.z) * k;
+    this.gravity.set(oneEuro(this.grav[0], x * sign, ms), oneEuro(this.grav[1], y * sign, ms), oneEuro(this.grav[2], z * sign, ms));
   }
 
   /**
@@ -119,15 +128,25 @@ export class Input {
 
   useStickFallback() { this.mode = 'stick'; }
 
-  update() {
-    const k = this.keys;
+  /** `dt` is the frame's length in seconds. */
+  update(dt = 1 / 60) {
+    const k = this.keys, sens = this.sens.k;
     const axis = (neg, pos) => (k.has(pos) ? 1 : 0) - (k.has(neg) ? 1 : 0);
+    // A key is not a full stick the instant it goes down: it builds to full over about a third of a second, so a tap
+    // nudges the nose a couple of degrees and a hold still turns as hard as ever. Letting go, or reversing, is quick.
+    const ramp = (name, want) => {
+      let v = this.kb[name];
+      if (want === 0 || want * v < 0) v = Math.abs(v) <= dt * 12 ? 0 : v - Math.sign(v) * dt * 12;
+      if (want !== 0 && want * v >= 0) v = THREE.MathUtils.clamp(v + want * dt * RAMP * sens, -1, 1);
+      return (this.kb[name] = v);
+    };
     let pitch = 0, roll = 0, yaw = 0, throttle = 0, fire = false;
 
     if (this.mode === 'tilt') {
       const a = this.tiltAngles();
-      roll = THREE.MathUtils.clamp((a.roll - this.neutral.roll) / this.tiltRange, -1, 1);
-      pitch = THREE.MathUtils.clamp((a.pitch - this.neutral.pitch) / this.tiltRange, -1, 1);
+      const range = TILT_RANGE / sens;
+      roll = THREE.MathUtils.clamp((a.roll - this.neutral.roll) / range, -1, 1);
+      pitch = THREE.MathUtils.clamp((a.pitch - this.neutral.pitch) / range, -1, 1);
       // Dead zone with smooth response curve so a resting hand doesn't jitter the plane.
       roll = curve(roll, 0.08); pitch = curve(pitch, 0.08);
     } else if (this.mode === 'stick' && this.touch.stick) {
@@ -136,9 +155,10 @@ export class Input {
 
     // Keyboard always works as a fallback layer, additive so a laptop with touch still plays. A gamepad too.
     const gp = this.pad();
-    const kp = axis('ArrowDown', 'ArrowUp') + axis('KeyS', 'KeyW') + (gp ? gp.pitch : 0);
-    const kr = axis('ArrowLeft', 'ArrowRight') + axis('KeyA', 'KeyD') + (gp ? gp.roll : 0);
-    yaw = THREE.MathUtils.clamp(axis('KeyQ', 'KeyE') + (gp ? gp.yaw : 0), -1, 1);
+    const sign = (v) => Math.sign(v);
+    const kp = ramp('pitch', sign(axis('ArrowDown', 'ArrowUp') + axis('KeyS', 'KeyW'))) + (gp ? gp.pitch : 0);
+    const kr = ramp('roll', sign(axis('ArrowLeft', 'ArrowRight') + axis('KeyA', 'KeyD'))) + (gp ? gp.roll : 0);
+    yaw = THREE.MathUtils.clamp(ramp('yaw', axis('KeyQ', 'KeyE')) + (gp ? gp.yaw : 0), -1, 1);
     pitch = THREE.MathUtils.clamp(pitch + kp, -1, 1);
     roll = THREE.MathUtils.clamp(roll + kr, -1, 1);
     if (this.invertPitch) pitch = -pitch;
@@ -149,6 +169,18 @@ export class Input {
 
     this.pitch = pitch; this.roll = roll; this.yaw = yaw; this.throttle = throttle; this.fire = fire;
   }
+}
+
+/** One Euro filter step (Casiez et al.): a low-pass whose cutoff rises with the signal's speed, so a still hand is
+ *  smoothed hard and a deliberate tilt comes through without lag. `f` keeps the state; `ms` is the sample's time. */
+function oneEuro(f, x, ms, minCutoff = 1, beta = 0.1, dCutoff = 1) {
+  const dt = f.t ? Math.min(0.1, Math.max(1e-3, (ms - f.t) / 1000)) : 0;
+  f.t = ms;
+  if (!dt) { f.x = x; f.dx = 0; return x; }
+  const alpha = (fc) => 1 / (1 + 1 / (2 * Math.PI * fc * dt));
+  f.dx += alpha(dCutoff) * ((x - f.x) / dt - f.dx);
+  f.x += alpha(minCutoff + beta * Math.abs(f.dx)) * (x - f.x);
+  return f.x;
 }
 
 function curve(v, dead) {

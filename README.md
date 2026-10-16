@@ -23,8 +23,13 @@ phone, open it in landscape and tilt to steer.
 | `P` / `R` | frame meter, with the 99th-percentile frame and the run's hitches (also `?perf` in the address) / resolution: full, a quarter step down, a half step down (remembered) |
 | Gamepad | left stick flies, right trigger fires, left trigger boosts, Y locks a missile, bumpers rudder, Start / Back, d-pad down mutes |
 
-Phones: tilt like a steering wheel to roll, tip the top edge toward you to climb, hold FIRE and BOOST. The `?` on the
-title screen has the full list.
+A held key builds to full stick over about a third of a second, so a tap nudges the nose a degree or two. With a
+bandit a few degrees off the nose the stick answers more gently and the nose is drawn toward the lead point, so small
+corrections land and a held target is followed. **Controls** on the title cycles Gentle, Normal and Quick (remembered).
+
+Phones: tilt like a steering wheel to roll, tip the top edge toward you to climb, hold FIRE and BOOST, and LOCK for a
+missile. The tilt reads gravity from the phone's own sensor fusion, so a jolt of the hands does not steer, smoothed
+with a One Euro filter. The `?` on the title screen has the full list.
 
 **Today's flight** is one seeded run per calendar day: where you start, where each wave's portal opens and how each
 wave is composed all come from the date, so everyone who flies today flies the same day. The title shows the date and

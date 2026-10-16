@@ -13,7 +13,12 @@
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; overflow: hidden; background: var(--ink); font-family: "Avenir Next", "Segoe UI", system-ui, sans-serif; color: var(--cream); }
-#game { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+/* A game, not a document: no text selection, no long-press callout (copy, look up), no grey flash on tap, no text
+   caret, no double-tap zoom, and no focus ring left on a button a thumb just pressed. */
+html, body { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; caret-color: transparent; touch-action: manipulation; }
+button:focus:not(:focus-visible) { outline: none; }
+textarea { -webkit-user-select: text; user-select: text; }   /* the copy-result fallback selects its text */
+#game { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
 /* Today's sky over the canvas (start.js) until the first frame is on it (main.js): the start is never a blank page,
    and nothing on the page moves while the GPU is still building its pipelines. The title waits for the same moment. */
 #veil { position: fixed; inset: 0; pointer-events: none; transition: opacity 0.6s ease-out; }
@@ -166,9 +171,9 @@ body:not(.ready) #title { display: none; }
 #btn-help:hover { transform: scale(1.12) rotate(8deg); background: rgba(255,246,229,0.25); }
 .intro .best { margin: 16px 0 0; font-size: 12px; letter-spacing: 0.2em; text-transform: uppercase; opacity: 0.7; }
 .intro .best span { font-weight: 800; }
-#btn-track { pointer-events: auto; font: inherit; font-weight: 800; letter-spacing: 0.2em; text-transform: uppercase; color: var(--cream); background: none; border: 0; border-bottom: 1px solid rgba(255,246,229,0.4); padding: 0 0 1px; cursor: pointer; opacity: 0.9; }
-#btn-track:hover { border-bottom-color: var(--cream); }
-#btn-track.pop span { display: inline-block; animation: bump 0.35s var(--spring); }
+#btn-track, #btn-sens { pointer-events: auto; font: inherit; font-weight: 800; letter-spacing: 0.2em; text-transform: uppercase; color: var(--cream); background: none; border: 0; border-bottom: 1px solid rgba(255,246,229,0.4); padding: 0 0 1px; cursor: pointer; opacity: 0.9; }
+#btn-track:hover, #btn-sens:hover { border-bottom-color: var(--cream); }
+#btn-track.pop span, #btn-sens.pop span { display: inline-block; animation: bump 0.35s var(--spring); }
 .intro .mobilehint { display: none; margin: 14px 0 0; font-size: 13px; opacity: 0.8; }
 .intro .mobilehint.install { margin-top: 6px; font-size: 11px; opacity: 0.6; }
 /* today's flight: one pill under the prompt, with the date and your best for it */
@@ -256,6 +261,8 @@ kbd { display: inline-block; min-width: 26px; padding: 3px 7px; margin: 0 2px; b
 #btn-boost.down { background: rgba(255,209,102,0.65); }
 .tbtn.lock { right: calc(164px + env(safe-area-inset-right)); bottom: calc(78px + env(safe-area-inset-bottom)); width: 84px; height: 84px; font-size: 13px; border-color: var(--sun); background: rgba(255,209,102,0.22); }
 .tbtn.lock.down { background: rgba(255,209,102,0.6); }
+.tbtn.lock #mslpips { position: absolute; left: 50%; bottom: 13px; transform: translateX(-50%); gap: 4px; height: 9px; }
+.tbtn.lock #mslpips i { width: 5px; height: 9px; }
 .tbtn.round { right: calc(28px + env(safe-area-inset-right)); top: calc(70px + env(safe-area-inset-top)); width: 52px; height: 52px; font-size: 24px; }
 .tbtn.round.spin { transition: transform 0.4s; transform: rotate(360deg); }
 .tbtn.round.quit { right: auto; left: calc(28px + env(safe-area-inset-left)); width: 44px; height: 44px; font-size: 18px; opacity: 0.8; }
@@ -294,11 +301,21 @@ kbd { display: inline-block; min-width: 26px; padding: 3px 7px; margin: 0 2px; b
   .card h1.small { font-size: 44px; }
   .tag { font-size: 15px; margin-bottom: 10px; }
   #topbar { top: calc(12px + env(safe-area-inset-top)); left: calc(20px + env(safe-area-inset-left)); right: calc(20px + env(safe-area-inset-right)); }
-  .value { font-size: 22px; }
-  .stat.center .value { font-size: 22px; }
-  /* the phone's thumbs own the bottom corners, so the gauges sit under the top row instead */
-  #bottombar { top: calc(132px + env(safe-area-inset-top)); bottom: auto; left: calc(20px + env(safe-area-inset-left)); right: calc(20px + env(safe-area-inset-right)); align-items: flex-start; }
-  .gauge { width: 150px; }
+  .value { font-size: 20px; }
+  .stat.center .value { font-size: 20px; }
+  /* The thumbs own the bottom corners and the picture owns the middle: hull is a slim bar under the wave pips, the
+     speed bar goes (the boost button lights while it is held), the missiles sit on the LOCK button, and the small
+     round buttons shrink and fade into the top corners. */
+  #bottombar { top: calc(64px + env(safe-area-inset-top)); bottom: auto; left: 50%; right: auto; width: 110px; transform: translateX(-50%); justify-content: center; }
+  .gauge { width: 110px; gap: 0; }
+  .gauge.right, .gauge .label { display: none; }
+  .bar { height: 7px; padding: 1px; }
+  .bar i { display: none; }
+  .label { font-size: 8px; letter-spacing: 0.22em; }
+  .tbtn.round, .tbtn.round.quit, .tbtn.round.mute { width: 36px; height: 36px; font-size: 16px; border-width: 2px; opacity: 0.55; top: calc(64px + env(safe-area-inset-top)); }
+  .tbtn.round { right: calc(20px + env(safe-area-inset-right)); }
+  .tbtn.round.mute { right: calc(64px + env(safe-area-inset-right)); }
+  .tbtn.round.quit { left: calc(20px + env(safe-area-inset-left)); }
   /* the corners belong to the thumbs, so the feed reads from the bottom middle, between the two buttons */
   #killfeed { top: auto; bottom: calc(20px + env(safe-area-inset-bottom)); left: 50%; right: auto; transform: translateX(-50%); text-align: center; font-size: 12px; }
   #warning { top: 60%; }

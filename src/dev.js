@@ -55,7 +55,7 @@ export function attachDevHooks({ game, input, world, camera, pipeline, renderer,
   window.__step = (seconds, fixedInput) => {
     const n = Math.round(seconds * 120);
     for (let i = 0; i < n; i++) {
-      if (fixedInput) Object.assign(input, fixedInput); else input.update();
+      if (fixedInput) Object.assign(input, fixedInput); else input.update(1 / 120);
       game.update(1 / 120);
     }
     frame(seconds);

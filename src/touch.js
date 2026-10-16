@@ -1,5 +1,7 @@
 // Wires on-screen touch controls (fire, boost, recenter, virtual stick) into the Input object.
 export function bindTouch(input, els) {
+  // a long press anywhere would otherwise open the browser's menu (or the image menu on the canvas)
+  addEventListener('contextmenu', (e) => e.preventDefault());
   const hold = (el, key) => {
     const on = (e) => {
       e.preventDefault(); input.touch[key] = true; el.classList.add('down');
@@ -13,7 +15,6 @@ export function bindTouch(input, els) {
     el.addEventListener('pointerup', off);
     el.addEventListener('pointercancel', off);
     el.addEventListener('lostpointercapture', off);
-    el.addEventListener('contextmenu', (e) => e.preventDefault());
   };
   hold(els.fire, 'fire');
   hold(els.boost, 'boost');
