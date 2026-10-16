@@ -6,11 +6,11 @@ export const isTouchDevice = () => (navigator.maxTouchPoints > 0 || 'ontouchstar
 
 export class Input {
   constructor() {
-    this.pitch = 0; this.roll = 0; this.yaw = 0; this.throttle = 0; this.fire = false;
+    this.pitch = 0; this.roll = 0; this.yaw = 0; this.throttle = 0; this.fire = false; this.lock = false;
     this.invertPitch = false;
     this.mode = 'keyboard';               // 'keyboard' | 'tilt' | 'stick'
     this.keys = new Set();
-    this.touch = { fire: false, boost: false, brake: false, stick: null };
+    this.touch = { fire: false, boost: false, brake: false, lock: false, stick: null };
     this.gravity = new THREE.Vector3(0, 0, 9.8);   // smoothed, screen-oriented gravity vector
     this.neutral = { roll: 0, pitch: 0.7 };
     this.tiltRange = 0.42;                 // radians of tilt for full deflection
@@ -35,7 +35,8 @@ export class Input {
   }
 
   /** The first connected gamepad, folded into the same axes the keyboard feeds: left stick flies, right trigger or
-   *  A fires, left trigger or X boosts, B brakes, bumpers are the rudder, Start starts and Back quits. */
+   *  A fires, left trigger or X boosts, B brakes, Y locks a missile on, bumpers are the rudder, Start starts, Back quits
+   *  and the d-pad's down mutes. */
   pad() {
     const pads = navigator.getGamepads ? navigator.getGamepads() : null;
     let gp = null;
@@ -43,13 +44,13 @@ export class Input {
     if (!gp) return null;
     const b = (i) => (gp.buttons[i] ? (gp.buttons[i].value > 0.4 || gp.buttons[i].pressed) : false);
     const roll = curve(gp.axes[0] || 0, 0.12), pitch = curve(-(gp.axes[1] || 0), 0.12);
-    const mask = (b(9) ? 1 : 0) | (b(8) ? 2 : 0) | (b(3) ? 4 : 0);
+    const mask = (b(9) ? 1 : 0) | (b(8) ? 2 : 0) | (b(13) ? 4 : 0);
     const rose = mask & ~this.padButtons;
     this.padButtons = mask;
     if (rose & 1 && this.onStart) this.onStart();
     if (rose & 2 && this.onAbort) this.onAbort();
     if (rose & 4 && this.onMute) this.onMute();
-    return { roll, pitch, yaw: (b(5) ? 1 : 0) - (b(4) ? 1 : 0), fire: b(7) || b(0), boost: b(6) || b(2), brake: b(1) };
+    return { roll, pitch, yaw: (b(5) ? 1 : 0) - (b(4) ? 1 : 0), fire: b(7) || b(0), boost: b(6) || b(2), brake: b(1), lock: b(3) };
   }
 
   /** Must be called from a user gesture (tap). Requests motion permission on iOS. */
@@ -144,6 +145,7 @@ export class Input {
 
     throttle = (k.has('ShiftLeft') || k.has('ShiftRight') || this.touch.boost || (gp && gp.boost)) ? 1 : ((k.has('ControlLeft') || k.has('ControlRight') || this.touch.brake || (gp && gp.brake)) ? -1 : 0);
     fire = k.has('Space') || this.touch.fire || !!(gp && gp.fire);
+    this.lock = k.has('KeyF') || this.touch.lock || !!(gp && gp.lock);
 
     this.pitch = pitch; this.roll = roll; this.yaw = yaw; this.throttle = throttle; this.fire = fire;
   }

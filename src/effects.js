@@ -27,6 +27,8 @@ const KIND = {
   },
   // a glow that pops then vanishes
   flash: { batch: 'glow', g: 0, drag: 0, draw: (fx, it, f) => fx.glow.matrix(it.i, m.compose(it.p, q.setFromAxisAngle(UP, f * 2), s.setScalar(it.size * (0.3 + Math.sin(f * Math.PI) * 0.9)))) },
+  // a burning flare: falls slowly and flickers out
+  flare: { batch: 'glow', g: 9, drag: 1.2, draw: (fx, it, f) => fx.glow.matrix(it.i, m.compose(it.p, q.setFromAxisAngle(UP, f * 9), s.setScalar(it.size * (1 - f * 0.7) * (0.75 + Math.random() * 0.5)))) },
   // a soft ring that spreads and thins while it fades: on the water, or standing in the air as the vapour cone
   ring: {
     batch: 'soft', g: 0, drag: 0, draw: (fx, it, f) => {
@@ -157,6 +159,15 @@ export class Effects {
     const hot = Math.random() < 0.55;
     this.spawnPuff(p.copy(pos).add(s.set(rnd(-1, 1), rnd(-1, 1), rnd(-1, 1))), s.set(rnd(-2, 2), rnd(1, 4), rnd(-2, 2)).addScaledVector(vel, 0.12),
       hot ? (Math.random() < 0.5 ? 0xff7a3d : 0xffc24a) : 0x555b66, hot ? rnd(0.8, 1.3) : rnd(0.8, 1.3), hot ? rnd(0.45, 0.7) : rnd(0.9, 1.4), hot);
+  }
+
+  /** Flares: bright sparks that tumble down and away behind a plane shaking off a missile. */
+  flares(pos, vel) {
+    for (let k = 0; k < 4; k++) {
+      const it = this.spawn('flare', pos, s.copy(vel).multiplyScalar(0.4).add(p.set(rnd(-14, 14), rnd(-4, 8), rnd(-14, 14))), rnd(1.2, 1.7)); if (!it) return;
+      this.glow.color(it.i, 0xffe6a0); this.glow.scalar(it.i, 6);
+      it.size = rnd(1.4, 2);
+    }
   }
 
   trailSmoke(pos, vel, heavy) {

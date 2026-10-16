@@ -12,7 +12,7 @@ export class Hud {
   constructor() {
     this.el = {
       hud: $('hud'), score: $('score'), wave: $('wave'), enemies: $('enemies'), health: $('health'), speed: $('speed'),
-      crosshair: $('crosshair'), hitmark: document.querySelector('#crosshair .x'), lead: $('leadret'), markers: $('markers'), banner: $('banner'), warning: $('warning'),
+      crosshair: $('crosshair'), hitmark: document.querySelector('#crosshair .x'), lockbox: $('lockbox'), msl: $('mslpips'), lead: $('leadret'), markers: $('markers'), banner: $('banner'), warning: $('warning'),
       vignette: $('vignette'), title: $('title'), gameover: $('gameover'), best: $('best'), bestwave: $('bestwave'), newbest: $('newbest'), touch: $('touch'),
       portal: $('portalmark'), popups: $('popups'), hitarc: $('hitarc'), landmarks: $('landmarks'), dbmode: $('dbmode'), dbtitle: $('dbtitle'), notice: $('notice'), dbscore: document.querySelector('#gameover .scoreline'), dbtiles: $('dbtiles'), dblog: $('dblog'), dbmedal: $('dbmedal'), share: $('btn-share'), gohint: $('gohint'), medals: $('medals'), dailyinfo: $('dailyinfo'),
       healthwrap: $('healthwrap'), killfeed: $('killfeed'), combo: $('combo'), mute: $('mute'), pips: $('pips'), speedbar: $('speedbar'), btnMute: $('btn-mute'),
@@ -78,6 +78,15 @@ export class Hud {
     const k = killed ? 1.5 : 1;
     this.el.hitmark.classList.toggle('kill', killed);
     this.el.hitmark.animate([{ opacity: 1, transform: `rotate(45deg) scale(${1.25 * k})` }, { opacity: 0, transform: `rotate(45deg) scale(${k})` }], { duration: killed ? 420 : 160, easing: 'cubic-bezier(0.2, 0.8, 0.3, 1)' });
+  }
+  /** Missiles left this wave, as pips. */
+  missiles(n) {
+    if (this.cache.msl === n) return;
+    const el = this.el.msl, grew = n > (this.cache.msl ?? 0);
+    this.cache.msl = n;
+    if (el.children.length !== Math.max(3, n)) el.replaceChildren(...Array.from({ length: Math.max(3, n) }, () => document.createElement('i')));
+    [...el.children].forEach((pip, k) => pip.classList.toggle('spent', k >= n));
+    if (grew) el.animate([{ transform: 'scale(1.35)', filter: 'brightness(1.8)' }, { transform: 'none', filter: 'none' }], { duration: 450, easing: 'cubic-bezier(0.2, 1.4, 0.4, 1)' });
   }
   /** A bullet just missed: the crosshair flicks. */
   whiz() { restart(this.el.crosshair, 'whiz'); }
@@ -154,7 +163,7 @@ export class Hud {
   }
 
   /** Project world positions into HUD elements. `portal` is the open portal's position, or null. `dt` ages the popups. */
-  updateOverlay(camera, player, enemies, leadPoint, locked, portal, landmarks, dt) {
+  updateOverlay(camera, player, enemies, leadPoint, locked, portal, landmarks, dt, lock = null) {
     const W = innerWidth, H = innerHeight;
     // Pins an element to a world point. Off screen (or behind the camera) it is hidden, or with `edge` it is held at
     // the screen's border as an arrow turned toward the point, `spin` radians past the arrow's own angle. Returns
@@ -174,6 +183,13 @@ export class Hud {
     };
     pin(this.el.crosshair, v.copy(player.pos).addScaledVector(player.forward, 420));
     if (leadPoint) { pin(this.el.lead, leadPoint); this.el.lead.classList.toggle('locked', locked); } else this.el.lead.style.display = 'none';
+    // the seeker's box closes in on its target as the lock builds and turns solid when it holds
+    const lb = this.el.lockbox;
+    if (lock && pin(lb, lock.pos)) {
+      const k = Math.round(lock.k * 20) / 20;
+      if (this.cache.lockK !== k) { this.cache.lockK = k; lb.style.setProperty('--k', k); }
+      if (this.cache.lockOn !== lock.locked) { this.cache.lockOn = lock.locked; lb.classList.toggle('locked', lock.locked); }
+    } else lb.style.display = 'none';
 
     let n = 0;
     for (const e of enemies) {

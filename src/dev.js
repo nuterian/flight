@@ -132,7 +132,13 @@ export function attachDevHooks({ game, input, world, camera, pipeline, renderer,
       fire = dist < 380 && off < PILOT.cone;
       throttle = dist > 240 ? 1 : (dist < 60 && l.z > 0 ? -1 : 0);
     }
-    input.pitch = pitch; input.roll = roll; input.yaw = yaw; input.throttle = throttle; input.fire = fire;
+    // with missiles: hold the lock while the target sits in the seeker's cone, let go the moment it holds
+    let lock = false;
+    if (useMissiles && pTarget && game.lock.missiles > 0 && pEvade <= 0) {
+      const l = p.toLocal(pTarget.pos, pdir), spec = game.lockSpec();
+      lock = !game.lock.locked && Math.atan2(Math.hypot(l.x, l.y), l.z) < spec.cone && l.length() < spec.range;
+    }
+    input.pitch = pitch; input.roll = roll; input.yaw = yaw; input.throttle = throttle; input.fire = fire; input.lock = lock;
   };
   window.__flyAverage = flyAverage;   // for staging: `__flyAverage(1/120); __game.update(1/120)` per step
   const profileOnce = (wave, seconds, s, pilot) => {
@@ -194,8 +200,11 @@ export function attachDevHooks({ game, input, world, camera, pipeline, renderer,
     };
   };
   /** Flies `runs` seeded fights from `wave` with the scripted pilot and averages the measurements (per-run in `runs`). */
-  window.__aiProfile = ({ wave = 1, seconds = 60, runs = 3, seedBase = 4242, pilot = 'average' } = {}) => {
+  let useMissiles = false;
+  /** `missiles`: the scripted pilot uses the lock and missiles as well as the guns. */
+  window.__aiProfile = ({ wave = 1, seconds = 60, runs = 3, seedBase = 4242, pilot = 'average', missiles = false } = {}) => {
     const rs = [];
+    useMissiles = missiles;
     try { for (let r = 0; r < runs; r++) rs.push(profileOnce(wave, seconds, seedBase + r * 7919, pilot)); }
     finally { Math.random = realRandom; }
     const avg = {};

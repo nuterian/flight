@@ -168,9 +168,10 @@ async function boot() {
   menuMusic();
   if (import.meta.env.DEV) import('./dev.js').then((d) => d.attachDevHooks({ game, input, world, camera, pipeline, renderer, scene, scenePass, boxes: [lit, glow, soft], useTitleLens, title, music, menuMusic }));
 
-  bindTouch(input, { fire: $('btn-fire'), boost: $('btn-boost'), recenter: $('btn-recenter'), stickZone: $('stickzone'), stickBase: $('stickbase'), stickKnob: $('stickknob') });
+  bindTouch(input, { fire: $('btn-fire'), boost: $('btn-boost'), lock: $('btn-lock'), recenter: $('btn-recenter'), stickZone: $('stickzone'), stickBase: $('stickbase'), stickKnob: $('stickknob') });
   if (touch) {
     $('controlshint').classList.add('hidden');
+    document.querySelector('#missiles .key').classList.add('hidden');
     $('starthint').textContent = 'TAP TO FLY';
     $('gohint').textContent = 'TAP TO FLY AGAIN';
   }
@@ -185,6 +186,7 @@ async function boot() {
     'Every wave\'s portal opens over a new part of the isles. Follow the teal diamond.',
     'A lighthouse, a wreck and a ring of stones are out there. Find them.',
     'Boost to catch a bandit, brake to turn inside one.',
+    touch ? 'Hold LOCK with a bandit near your nose, let go to fire a missile.' : 'Hold F with a bandit near your nose, let go to fire a missile.',
     'Above the clouds your wingtips draw contrails.',
     'Clear a wave untouched for a bonus.',
   ];

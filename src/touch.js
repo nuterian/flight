@@ -17,6 +17,7 @@ export function bindTouch(input, els) {
   };
   hold(els.fire, 'fire');
   hold(els.boost, 'boost');
+  hold(els.lock, 'lock');
   els.recenter.addEventListener('pointerdown', (e) => { e.preventDefault(); input.recenter(); els.recenter.classList.add('spin'); setTimeout(() => els.recenter.classList.remove('spin'), 400); });
 
   // Virtual stick: appears wherever the thumb lands in the left zone (only in stick mode).

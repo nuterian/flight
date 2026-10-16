@@ -15,12 +15,13 @@ phone, open it in landscape and tilt to steer.
 | `W` `A` `S` `D` or arrows | pitch, roll and turn |
 | `Q` `E` | rudder |
 | `Space` | fire |
+| `F` | hold to lock a missile on the bandit nearest your nose, release to fire |
 | `Shift` / `Ctrl` | boost / brake |
 | `I` / `C` | invert pitch / recenter tilt |
 | `T` | today's flight |
 | `M` / `Esc` | mute / quit to title |
 | `P` / `R` | frame meter, with the 99th-percentile frame and the run's hitches (also `?perf` in the address) / resolution: full, a quarter step down, a half step down (remembered) |
-| Gamepad | left stick flies, right trigger fires, left trigger boosts, bumpers rudder, Start / Back |
+| Gamepad | left stick flies, right trigger fires, left trigger boosts, Y locks a missile, bumpers rudder, Start / Back, d-pad down mutes |
 
 Phones: tilt like a steering wheel to roll, tip the top edge toward you to climb, hold FIRE and BOOST. The `?` on the
 title screen has the full list.
@@ -54,6 +55,13 @@ Bandits arrive through a portal each wave and come in bigger packs. They hunt in
 sitting on your tail for a few seconds, a bandit breaks off and cruises about before coming back, and only part of
 the pack hunts you at once, so there is always one showing you its tail. Quick kills chain into combos. Stay inside
 the grid walls: outside them a ten-second countdown drains your hull.
+
+Missiles are for the bandit you cannot get your nose on. Hold `F` (LOCK on a phone) with a bandit near the nose and
+the seeker's brackets close in on it with a quickening beep; once it holds, let go and the missile is off. There are
+three a wave at first, one fewer every four waves, never fewer than one, and a triple kill earns one back. Later waves
+make the lock slower, the cone narrower and the missile less agile, bandits may break when they see it coming, and an
+ace may shake it off with flares. Measured with the scripted pilots, missiles take a rookie from wave 3 to wave 4 in
+three minutes and leave wave 6 as deadly as it was.
 
 ## Run it yourself
 
@@ -130,7 +138,7 @@ note is generated in code.
 | `src/start.js`, `src/times.js`, `src/bake.js`, `src/prepare.js`, `src/boot.worker.js` | what is computed once from the terrain (the land's geometry, baked light, the water's noise), and the workers that compute it while the page starts |
 | `src/world.js` | terrain mesh, sea, sky, clouds, props, wildlife, villages, lighting |
 | `src/boxes.js`, `src/plane.js` | the instanced box batches and the plane as data |
-| `src/aircraft.js`, `src/ai.js`, `src/bullets.js` | flight model, bandit brains, tracers with aim assist |
+| `src/aircraft.js`, `src/ai.js`, `src/bullets.js`, `src/missiles.js` | flight model, bandit brains, tracers with aim assist, homing missiles |
 | `src/airship.js` | the fifth-wave airship: envelope, turrets, gondola, the fall |
 | `src/landmarks.js` | the lighthouse, the wreck and the stone ring, and the arenas, all found from the terrain |
 | `src/game.js`, `src/portal.js` | waves, scoring, damage, camera, the arrival portal |

@@ -42,11 +42,16 @@ body:not(.ready) #title { display: none; }
 #hud:not(.hidden) .stat.right, #hud:not(.hidden) .gauge.right { animation-delay: 0.12s; }
 @keyframes hudIn { from { opacity: 0; transform: translateY(-14px); } to { opacity: 1; transform: none; } }
 #hud:not(.hidden) .gauge { animation-name: hudInUp; }
+#hud:not(.hidden) #missiles { animation: hudInUp 0.7s var(--spring) 0.06s both; }
 @keyframes hudInUp { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
 
 #bottombar { position: absolute; left: 28px; right: 28px; bottom: 26px; display: flex; justify-content: space-between; align-items: flex-end; }
 .gauge { display: flex; flex-direction: column; gap: 7px; width: 240px; }
 .gauge.right { align-items: flex-end; text-align: right; }
+#missiles { display: flex; flex-direction: column; align-items: center; gap: 7px; }
+#mslpips { display: flex; gap: 7px; height: 12px; align-items: flex-end; }
+#mslpips i { width: 6px; height: 14px; border-radius: 3px 3px 1px 1px; background: var(--hud); box-shadow: 0 0 6px rgba(255,246,229,0.5); transition: opacity 0.3s, transform 0.35s var(--spring); transform-origin: bottom; }
+#mslpips i.spent { opacity: 0.25; box-shadow: none; transform: scaleY(0.6); }
 .bar { position: relative; width: 100%; height: 12px; padding: 2px; border-radius: 999px; background: var(--hud-shade); box-shadow: inset 0 1px 0 rgba(0,0,0,0.25), 0 0 0 1px rgba(255,246,229,0.15); backdrop-filter: blur(6px); }
 .bar > div { height: 100%; border-radius: 999px; transition: width 0.15s, background 0.3s; }
 .bar i { position: absolute; top: 3px; bottom: 3px; width: 1px; background: rgba(29, 43, 58, 0.35); }
@@ -82,6 +87,15 @@ body:not(.ready) #title { display: none; }
 #crosshair .x::before { width: 34px; height: 2px; margin: -1px 0 0 -17px; -webkit-mask: linear-gradient(90deg, #000 0 30%, transparent 30% 70%, #000 70%); mask: linear-gradient(90deg, #000 0 30%, transparent 30% 70%, #000 70%); }
 #crosshair .x::after { width: 2px; height: 34px; margin: -17px 0 0 -1px; -webkit-mask: linear-gradient(180deg, #000 0 30%, transparent 30% 70%, #000 70%); mask: linear-gradient(180deg, #000 0 30%, transparent 30% 70%, #000 70%); }
 #crosshair .x.kill::before, #crosshair .x.kill::after { background: var(--coral); box-shadow: 0 0 6px rgba(255,107,87,0.8); }
+/* the missile seeker: four corner brackets that close in from wide to tight as the lock builds (--k, 0..1) */
+#lockbox { --c: var(--sun); position: absolute; left: 0; top: 0; width: 40px; height: 40px; margin: -20px 0 0 -20px; display: none; will-change: transform;
+  transform: scale(calc(2.2 - 1.2 * var(--k, 0))); opacity: calc(0.45 + 0.55 * var(--k, 0)); transition: transform 0.08s linear; filter: drop-shadow(0 1px 0 rgba(0,0,0,0.4));
+  background: linear-gradient(var(--c), var(--c)) 0 0 / 12px 2px no-repeat, linear-gradient(var(--c), var(--c)) 0 0 / 2px 12px no-repeat,
+    linear-gradient(var(--c), var(--c)) 100% 0 / 12px 2px no-repeat, linear-gradient(var(--c), var(--c)) 100% 0 / 2px 12px no-repeat,
+    linear-gradient(var(--c), var(--c)) 0 100% / 12px 2px no-repeat, linear-gradient(var(--c), var(--c)) 0 100% / 2px 12px no-repeat,
+    linear-gradient(var(--c), var(--c)) 100% 100% / 12px 2px no-repeat, linear-gradient(var(--c), var(--c)) 100% 100% / 2px 12px no-repeat; }
+#lockbox.locked { --c: var(--coral); animation: lockPulse 0.14s ease-in-out infinite alternate; }
+@keyframes lockPulse { to { scale: 0.86; } }
 #leadret { position: absolute; width: 30px; height: 30px; margin: -15px 0 0 -15px; border: 1.5px dashed var(--sun); border-radius: 50%; display: none; filter: drop-shadow(0 1px 0 rgba(0,0,0,0.4)); animation: spin 6s linear infinite; }
 #leadret.locked { border-style: solid; border-color: var(--coral); animation: none; box-shadow: 0 0 10px rgba(255, 107, 87, 0.5); }
 @keyframes spin { to { transform: rotate(360deg); } }
@@ -240,6 +254,8 @@ kbd { display: inline-block; min-width: 26px; padding: 3px 7px; margin: 0 2px; b
 .tbtn.fire.down { background: rgba(255,107,87,0.7); }
 #btn-boost { left: calc(28px + env(safe-area-inset-left)); bottom: calc(60px + env(safe-area-inset-bottom)); border-color: var(--sun); background: rgba(255,209,102,0.3); }
 #btn-boost.down { background: rgba(255,209,102,0.65); }
+.tbtn.lock { right: calc(164px + env(safe-area-inset-right)); bottom: calc(78px + env(safe-area-inset-bottom)); width: 84px; height: 84px; font-size: 13px; border-color: var(--sun); background: rgba(255,209,102,0.22); }
+.tbtn.lock.down { background: rgba(255,209,102,0.6); }
 .tbtn.round { right: calc(28px + env(safe-area-inset-right)); top: calc(70px + env(safe-area-inset-top)); width: 52px; height: 52px; font-size: 24px; }
 .tbtn.round.spin { transition: transform 0.4s; transform: rotate(360deg); }
 .tbtn.round.quit { right: auto; left: calc(28px + env(safe-area-inset-left)); width: 44px; height: 44px; font-size: 18px; opacity: 0.8; }

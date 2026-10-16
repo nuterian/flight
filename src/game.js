@@ -4,6 +4,7 @@ import { Plane, SCHEMES } from './plane.js';
 import { Airship } from './airship.js';
 import { EnemyBrain } from './ai.js';
 import { BulletPool, BULLET_SPEED } from './bullets.js';
+import { Missiles } from './missiles.js';
 import { Effects } from './effects.js';
 import { Trails } from './trails.js';
 import { Sound, store } from './audio.js';
@@ -45,6 +46,9 @@ export class Game {
     this.skimTimer = 0; this.wasFast = false;
     this.playerBullets = new BulletPool(glow, 260, 0xffe08a);
     this.enemyBullets = new BulletPool(glow, 260, 0xff5a3c);
+    this.missiles = new Missiles(scene, glow);
+    // the lock: the bandit the missile seeker is on, how long it has held it, whether it is locked, missiles left
+    this.lock = { target: null, t: 0, locked: false, missiles: 0, beep: 0 };
     this.downed = [];   // shot-down planes still falling, on fire: { ac, t, spin, smoke }
     this.punch = 0;     // a kill's kick to the picture and the lens, 0..1, decaying (read by the post pass)
     this.killFollow = null;
@@ -103,8 +107,9 @@ export class Game {
     if (this.airship) this.airship.hide();
     if (this.hud) this.hud.resetScore();
     this.world.setDanger(0);
-    this.playerBullets.clear(); this.enemyBullets.clear(); this.effects.clear();
+    this.playerBullets.clear(); this.enemyBullets.clear(); this.missiles.clear(); this.effects.clear();
     this.downed.length = 0; this.punch = 0; this.killFollow = null;
+    Object.assign(this.lock, { target: null, t: 0, locked: false, missiles: 0 });
     for (const e of this.enemies) { e.ac.alive = false; e.ac.hide(); e.pending = 0; }
   }
 
@@ -169,6 +174,8 @@ export class Game {
     // All of it fades out by wave 7, after which it is your aim alone.
     const learn = this.learn = clamp(1 - (this.wave - 1) / 6, 0, 1);
     this.assist.radius = 1 + 3 * learn; this.assist.turn = 0.25 + 0.75 * learn;
+    // missiles: three a wave to begin with, one fewer every four waves, never fewer than one
+    this.lock.missiles = Math.max(1, 3 - Math.floor((this.wave - 1) / 4));
     for (const m of MEDALS) if (m.wave && this.wave >= m.wave) this.earn(m.id);
     // Only part of the pack hunts you at once (1 on the first waves, one more every three); the rest cruise about
     // until a slot frees, so there is always a bandit showing you its tail and never a whole wave on yours.
@@ -391,12 +398,12 @@ export class Game {
     this.punch = Math.max(this.punch, Math.min(1, (0.5 + 0.17 * this.combo) * size));
   }
 
-  /** A player's bullet has struck `t` at `point`. */
-  strike(t, point, dmg) {
+  /** A player's bullet or missile has struck `t` at `point`. */
+  strike(t, point, dmg, missile = false) {
     const p = this.player;
     this.effects.hitSpark(point);
     this.audio.hit(t.pos.distanceTo(p.pos));
-    this.hits++; this.waveHits++;
+    if (!missile) { this.hits++; this.waveHits++; }
     if (t.absorb) { this.addScore(1); return; }   // the envelope: a spark and nothing else
     const killed = t.damage(dmg);
     this.hud.hitmark(killed);
@@ -407,9 +414,9 @@ export class Game {
     if (t.ship && t.turret >= 0) { this.addScore(150); this.hud.kill('TURRET DOWN  +150'); this.hud.popup(t.pos, '+150'); this.audio.explosion(t.pos.distanceTo(p.pos), 0.7); this.world.scare(t.pos, 140); this.killPunch(t.pos, 0.7); return; }
     if (t.ship) { this.addScore(10); return; }   // the gondola is done: the airship handles its own fall
     const type = this.enemies.find((e) => e.ac === t)?.type || 'hound';
-    this.killAircraft(t, 1, true);
+    this.killAircraft(t, missile ? 1.3 : 1, true);
     this.registerKill(TYPE_LABEL[type], TYPE_SCORE[type] * this.wave, t.pos);
-    this.killPunch(t.pos);
+    this.killPunch(t.pos, missile ? 1.3 : 1);
     if (p.pos.y - groundAt(p.pos.x, p.pos.z) < 8) this.earn('wavetop');
     const last = this.pending === 0 && !this.enemies.some((e) => e.ac.alive) && !this.airship.alive;
     if (!last && type === 'ace') {   // an ace down earns a banner and a short turn of the camera round its wreck
@@ -423,6 +430,54 @@ export class Game {
   followKill(ac, secs) {
     this.killCam = secs; this.killPoint.copy(ac.pos); this.killFollow = ac;
     this.killAngle = Math.atan2(this.camera.position.x - ac.pos.x, this.camera.position.z - ac.pos.z);
+  }
+
+  /** What the lock allows on this wave: the cone it must be held in, how long it takes, how hard missiles turn. */
+  lockSpec() {
+    const w = this.wave - 1;
+    return { cone: Math.max(0.22, 0.42 - 0.025 * w), time: Math.min(1.2, 0.5 + 0.08 * w), turn: Math.max(1.6, 3.2 - 0.16 * w), range: 650 };
+  }
+
+  /** Hold the lock key with a bandit near the nose: the seeker settles on it, and once it is locked, letting go
+   *  fires a missile. The seeker keeps a target it already has a little outside the cone. */
+  updateLock(dt) {
+    const L = this.lock, p = this.player;
+    if (!this.input.lock) {
+      if (L.locked && L.target.alive && L.missiles > 0) this.launchMissile(L.target);
+      L.target = null; L.t = 0; L.locked = false;
+      return;
+    }
+    if (L.missiles <= 0) { L.target = null; return; }
+    const spec = this.lockSpec();
+    let best = null, bestA = spec.cone;
+    for (const t of this.targetList) {
+      if (!t.alive || t.absorb) continue;
+      tv.copy(t.pos).sub(p.pos);
+      if (tv.lengthSq() > spec.range * spec.range) continue;
+      const a = p.forward.angleTo(tv);
+      if (t === L.target && a < spec.cone * 1.3) { best = t; break; }
+      if (a < bestA) { bestA = a; best = t; }
+    }
+    if (best !== L.target) { L.target = best; L.t = 0; L.locked = false; }
+    if (!best) return;
+    L.t += dt;
+    if (!L.locked && L.t >= spec.time) { L.locked = true; L.beep = 0; }
+  }
+
+  /** A missile off the rail at `target`. A bandit may see it coming and break; an ace may shake it off with flares. */
+  launchMissile(target) {
+    const p = this.player, e = this.enemies.find((x) => x.ac === target);
+    this.lock.missiles--;
+    let flareAt = -1;
+    if (e) {
+      if (e.type === 'ace' && Math.random() < 0.6) flareAt = rnd(0.5, 0.9);
+      else if (Math.random() < e.brain.skill * 0.5) e.brain.evade('pursue');
+    }
+    tv.copy(p.right).multiplyScalar(this.lock.missiles % 2 ? 3 : -3).addScaledVector(p.up, -1.2).add(p.pos);
+    tv2.copy(p.velocity).addScaledVector(p.forward, 25);
+    this.missiles.launch(tv, tv2, target, this.lockSpec().turn, flareAt);
+    this.audio.missile();
+    this.camKick = 1;
   }
 
   nearestEnemy(range) {
@@ -488,6 +543,7 @@ export class Game {
     this.hud.kill(`${label}  +${pts}`);
     if (at) this.hud.popup(at, `+${pts}`, this.combo > 1);
     if (this.combo > 1) { this.hud.combo(this.combo, CALLS[this.combo]); this.effects.shake = Math.max(this.effects.shake, 0.25 + this.combo * 0.08); }
+    if (this.combo === 3 && this.lock.missiles < 3) { this.lock.missiles++; this.hud.kill('MISSILE +1'); }   // a triple earns a missile back
     this.hud.bump('score');
     this.audio.kill(this.combo);
   }
@@ -580,6 +636,7 @@ export class Game {
       this.shedTip(p);
       this.nearMiss(p, dt);
       if (inp.fire) this.fire(p, this.playerBullets, 11, 0.012, 13);
+      this.updateLock(dt);
       // the loop medal: a full turn of pitch inside eight seconds that really goes over the top (nose near vertical
       // both ways, so a string of banked turns does not count), without a shot fired
       if (inp.fire || this.loopT > 8) { this.loopAcc = 0; this.loopT = 0; this.loopUp = this.loopDown = false; }
@@ -643,6 +700,9 @@ export class Game {
     // ---- bullets
     const targets = this.targetList;
     this.playerBullets.update(dt, targets, (t, point, dmg) => this.strike(t, point, dmg), (pt, water) => this.effects.groundHit(pt, water), this.assist);
+    this.missiles.update(dt, this.camera.position, (t, point) => this.strike(t, point, t.ship ? 30 : 999, true),
+      (t) => { this.effects.flares(t.pos, t.velocity); this.hud.kill('FLARES'); this.audio.whoosh(0.5, 0, 0.6); },
+      (pt, water) => { this.effects.spawnFlash(pt, 4, 0.2); if (pt.y < groundAt(pt.x, pt.z) + 2) this.effects.groundHit(pt, water); });
     // shot-down planes fall burning until they hit something
     for (let i = this.downed.length - 1; i >= 0; i--) {
       const d = this.downed[i], ac = d.ac;
@@ -702,7 +762,15 @@ export class Game {
       this.hud.updateStats({ score: this.score, wave: this.wave, enemies: (this.aliveCount || 0) + this.pending, total: this.waveSize || 0, health: p.health, maxHealth: p.maxHealth, speed: p.speed, maxSpeed: PLAYER_STATS.maxSpeed * 1.2, boost: p.input.throttle > 0, firing: this.input.fire, combo: this.combo > 0 ? this.comboTimer / 2.5 : 0 }, dt);
       const lead = this.computeLead(this.targetList);
       for (const l of this.world.landmarks.list) l.found = this.found.has(l.id);
-      this.hud.updateOverlay(this.camera, { pos: p.renderPos, forward: p.renderForward }, this.targetList, lead.point, lead.locked, this.portal.active ? this.portal.pos : null, this.world.landmarks.list, dt);
+      const L = this.lock, spec = this.lockSpec();
+      // the seeker's voice: a beep that quickens as the lock builds, then a solid tone once it holds
+      if (L.target) {
+        L.beep -= dt;
+        if (L.beep <= 0) { L.beep = L.locked ? 0.07 : 0.24 - 0.16 * Math.min(1, L.t / spec.time); this.audio.seeker(L.locked); }
+      }
+      this.hud.missiles(L.missiles);
+      this.hud.updateOverlay(this.camera, { pos: p.renderPos, forward: p.renderForward }, this.targetList, lead.point, lead.locked, this.portal.active ? this.portal.pos : null, this.world.landmarks.list, dt,
+        L.target ? { pos: L.target.pos, k: Math.min(1, L.t / spec.time), locked: L.locked } : null);
     }
   }
 

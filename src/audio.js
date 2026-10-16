@@ -208,6 +208,16 @@ export class Sound {
     if (killed) this.tone(f * 1.5, 'square', 0.06, 0.04, 0.05);
   }
 
+  /** The seeker: a short beep while the lock builds, a higher one, repeated into a steady tone, once it holds. */
+  seeker(locked) { if (!this.ctx) return; this.tone(locked ? 1760 : 1175, 'square', locked ? 0.075 : 0.05, 0.03); }
+
+  /** A missile off the rail: a hiss of motor and a falling whoosh. */
+  missile() {
+    if (!this.ctx) return;
+    this.burst(1800, 'bandpass', 0.7, 0.3, 0.01);
+    this.blip(420, 90, 'sawtooth', 0.35, 0.08);
+  }
+
   kill(combo = 1) {
     if (!this.ctx) return;
     const up = 1 + 0.12 * (combo - 1);
