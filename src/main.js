@@ -320,9 +320,12 @@ async function boot() {
     resize(ceiling());
     hud.notice(`Resolution ${ratio}× · ${renderer.domElement.width} × ${renderer.domElement.height}${trim ? '' : ' · full'}`, 2500);
   });
-  // The frame meter: frames a second, the longest frame of the last half second, the script's share of a frame and
-  // the size of the picture. Off, it costs two clock reads a frame.
-  const meter = { el: null, on: false, frames: 0, since: performance.now(), worst: 0, cpu: 0 };
+  // The frame meter: frames a second, the 99th percentile of the last ten seconds of frames, the longest frame of
+  // the last half second, the run's hitches (frames over 25 ms in play), the script's share of a frame and the size
+  // of the picture. A run that ends with the meter on leaves its frame times in the console. Off, it costs two clock
+  // reads a frame.
+  const meter = { el: null, on: false, frames: 0, since: performance.now(), worst: 0, cpu: 0, ring: new Float32Array(600), n: 0, run: null };
+  const percentile = (a, q) => a[Math.min(a.length - 1, Math.floor(a.length * q))];
   const showMeter = (on) => {
     meter.on = on;
     if (on && !meter.el) { meter.el = document.createElement('div'); meter.el.className = 'pill'; meter.el.style.cssText = 'bottom:44px;letter-spacing:0.08em;font-variant-numeric:tabular-nums'; document.body.appendChild(meter.el); }
@@ -332,9 +335,20 @@ async function boot() {
   if (PERF) showMeter(true);
   const measure = (frameMs, cpuMs, now) => {
     meter.frames++; meter.cpu += cpuMs; if (frameMs > meter.worst) meter.worst = frameMs;
+    meter.ring[meter.n++ % meter.ring.length] = frameMs;
+    if (game.state === 'playing' || game.state === 'dead') {
+      const r = meter.run || (meter.run = { times: [], hitches: 0 });
+      r.times.push(frameMs); if (frameMs > 25) r.hitches++;
+    } else if (meter.run) {   // the run is over: its frames, once, in the console
+      const t = meter.run.times.sort((a, b) => a - b);
+      if (t.length > 60) console.info(`run frames (ms): ${t.length} frames · median ${percentile(t, 0.5).toFixed(1)} · p99 ${percentile(t, 0.99).toFixed(1)} · p99.9 ${percentile(t, 0.999).toFixed(1)} · worst ${t[t.length - 1].toFixed(1)} · ${meter.run.hitches} over 25 ms`);
+      meter.run = null;
+    }
     if (now - meter.since < 500) return;
     const canvasEl = renderer.domElement;
-    meter.el.textContent = `${Math.round(meter.frames * 1000 / (now - meter.since))} fps · worst ${meter.worst.toFixed(1)} ms · cpu ${(meter.cpu / meter.frames).toFixed(1)} ms · ${canvasEl.width}×${canvasEl.height} @${ratio}`;
+    const recent = meter.ring.slice(0, Math.min(meter.n, meter.ring.length)).sort();
+    const hitches = meter.run ? ` · hitches ${meter.run.hitches}` : '';
+    meter.el.textContent = `${Math.round(meter.frames * 1000 / (now - meter.since))} fps · p99 ${percentile(recent, 0.99).toFixed(1)} ms · worst ${meter.worst.toFixed(1)} ms${hitches} · cpu ${(meter.cpu / meter.frames).toFixed(1)} ms · ${canvasEl.width}×${canvasEl.height} @${ratio}`;
     meter.frames = 0; meter.cpu = 0; meter.worst = 0; meter.since = now;
   };
   let last = performance.now();

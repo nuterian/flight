@@ -200,11 +200,28 @@ function buildWater({ mobile, camera, sunDirUniform, tod, noise }) {
   }
   geo.setAttribute('depth', new THREE.BufferAttribute(dep, 1));
   geo.setAttribute('edge', new THREE.BufferAttribute(edge, 1));
-
-  const near = new THREE.Mesh(geo, new THREE.MeshStandardNodeMaterial({ roughness: 0.2, metalness: 0.0, transparent: true }));
-  near.rotation.x = -Math.PI / 2;
-  near.receiveShadow = true;
-  near.renderOrder = 1;
+  // The sea is see-through only where it is shallow. From a depth of 0.32 (about 12 units) its own opacity below has
+  // reached 1, so every quad that deep is drawn by an opaque mesh: the same picture, but the GPU no longer shades the
+  // seafloor and the land hidden under it. The shoreline band keeps the blended material. One set of vertices, two
+  // index lists.
+  const src = geo.index.array, deepIdx = [], shoreIdx = [];
+  for (let q = 0; q < src.length; q += 6) {
+    let d = 1;
+    for (let k = 0; k < 6; k++) d = Math.min(d, dep[src[q + k]]);
+    const into = d >= 0.32 ? deepIdx : shoreIdx;
+    for (let k = 0; k < 6; k++) into.push(src[q + k]);
+  }
+  const part = (idx, transparent) => {
+    const g = new THREE.BufferGeometry();
+    for (const name in geo.attributes) g.setAttribute(name, geo.attributes[name]);
+    g.setIndex(idx);
+    const mesh = new THREE.Mesh(g, new THREE.MeshStandardNodeMaterial({ roughness: 0.2, metalness: 0.0, transparent }));
+    mesh.rotation.x = -Math.PI / 2;
+    mesh.receiveShadow = true;
+    if (transparent) mesh.renderOrder = 1;
+    return mesh;
+  };
+  const near = part(deepIdx, false), shore = part(shoreIdx, true);
 
   // One real planar reflection for the near ocean, rendered at half resolution by a camera that sees only the
   // mirror layer. The reflector clones the viewing camera the first time it sees it; seeding that clone here is
@@ -260,7 +277,7 @@ function buildWater({ mobile, camera, sunDirUniform, tod, noise }) {
       .add(sin(time.mul(0.6).add(positionLocal.y.mul(0.045)).sub(positionLocal.x.mul(0.015))).mul(0.35));
     mat.positionNode = positionLocal.add(vec3(0, 0, wave.mul(mix(float(0.15), float(1.0), d)).mul(edgeNode)));
   };
-  shade(near.material, attribute('depth', 'float'), attribute('edge', 'float'), true);
+  for (const m of [near, shore]) shade(m.material, attribute('depth', 'float'), attribute('edge', 'float'), true);
 
   // Far ocean: same look, constant deep water, flat, opaque, runs out past the fog to the horizon.
   // Built as a frame around the near mesh (not underneath it) so the swell can never poke through it.
@@ -278,7 +295,7 @@ function buildWater({ mobile, camera, sunDirUniform, tod, noise }) {
   // Lakes and rivers reuse the same shading with their own depth and no swell.
   const lakeMaterial = new THREE.MeshStandardNodeMaterial({ roughness: 0.2, metalness: 0.0, transparent: true });
   shade(lakeMaterial, attribute('depth', 'float'), float(0), false);
-  return { near, far, lakeMaterial };
+  return { near, shore, far, lakeMaterial };
 }
 
 // The combat zone: five holographic grid walls that fade in as you approach and burn red when you're outside.
@@ -780,7 +797,7 @@ export async function createWorld(scene, { mobile, lit, glow, soft, camera }, pr
   const terrain = buildTerrain(await pre.land, await pre.occlusion);
   // things you can fly close past: the game sounds a rush of air for each, judged by its x, y, z and radius r
   const obstacles = [...landmarks.obstacles, ...props.balloons];
-  scene.add(terrain, seafloor, water.near, water.far, fresh, sky, clouds, bounds.mesh);
+  scene.add(terrain, seafloor, water.near, water.shore, water.far, fresh, sky, clouds, bounds.mesh);
   for (const o of [...terrain.children, sky, clouds, lit.mesh, glow.mesh, props.leaves]) o.layers.enable(MIRROR_LAYER);
 
   // Where the sun sits on screen, for the sun shafts: strength fades as it leaves the frame and is 0 behind us.

@@ -19,7 +19,7 @@ phone, open it in landscape and tilt to steer.
 | `I` / `C` | invert pitch / recenter tilt |
 | `T` | today's flight |
 | `M` / `Esc` | mute / quit to title |
-| `P` / `R` | frame meter (also `?perf` in the address) / resolution: full, a quarter step down, a half step down (remembered) |
+| `P` / `R` | frame meter, with the 99th-percentile frame and the run's hitches (also `?perf` in the address) / resolution: full, a quarter step down, a half step down (remembered) |
 | Gamepad | left stick flies, right trigger fires, left trigger boosts, bumpers rudder, Start / Back |
 
 Phones: tilt like a steering wheel to roll, tip the top edge toward you to climb, hold FIRE and BOOST. The `?` on the
@@ -81,7 +81,9 @@ note is generated in code.
   into a tiling volume instead of being evaluated on every pixel of the sea, the land is sixteen indexed chunks so
   the shadow map, the mirror and the view each draw only what they can see, the seafloor exists only where the
   water is clear enough to show it, antialiasing is spent on the scene and not on the final full-screen quad, and
-  the motion smear costs nothing when it is off. If a machine still falls behind (a fanless laptop loses a third
+  the motion smear costs nothing when it is off. The deep sea is drawn opaque (its own opacity has reached 1 there)
+  and only the shoreline band is blended, so the GPU no longer shades the seafloor and land hidden under it: 0.2 to
+  0.5 ms a frame for an identical picture. If a machine still falls behind (a fanless laptop loses a third
   of its GPU clock once warm) the drawing buffer steps down, never below a pixel ratio of 1.5 on a laptop, and
   steps back up when there is room. If it is still slow at the floor, at a steady 30 frames a second, the game says
   what that usually is (a browser's Energy Saver, a system's Low Power Mode) and gives the pixels back.
