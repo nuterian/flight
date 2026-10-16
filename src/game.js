@@ -27,6 +27,8 @@ const TWO_PI = Math.PI * 2;
 const TYPE_LABEL = { hound: 'BANDIT DOWN', interceptor: 'INTERCEPTOR DOWN', ace: 'ACE DOWN' };
 const TYPE_SCORE = { hound: 100, interceptor: 140, ace: 300 };
 const BOSS_EVERY = 5;
+// what a kill in a chain is called
+const CALLS = { 2: 'DOUBLE', 3: 'TRIPLE', 4: 'QUAD' };
 
 export class Game {
   constructor(scene, camera, input, hud, world, batches) {
@@ -43,6 +45,9 @@ export class Game {
     this.skimTimer = 0; this.wasFast = false;
     this.playerBullets = new BulletPool(glow, 260, 0xffe08a);
     this.enemyBullets = new BulletPool(glow, 260, 0xff5a3c);
+    this.downed = [];   // shot-down planes still falling, on fire: { ac, t, spin, smoke }
+    this.punch = 0;     // a kill's kick to the picture and the lens, 0..1, decaying (read by the post pass)
+    this.killFollow = null;
     this.trails = new Trails(scene, (MAX_ENEMIES + 1) * 2);
     // contrails: up in the cold air above 360 the player's wingtips draw long white lines that hang for a while
     this.contrails = new Trails(scene, 2, 140, 0.45, { fade: 0.05, opacity: 0.42, sample: 0.09, widen: true, renderOrder: 5 });
@@ -99,6 +104,7 @@ export class Game {
     if (this.hud) this.hud.resetScore();
     this.world.setDanger(0);
     this.playerBullets.clear(); this.enemyBullets.clear(); this.effects.clear();
+    this.downed.length = 0; this.punch = 0; this.killFollow = null;
     for (const e of this.enemies) { e.ac.alive = false; e.ac.hide(); e.pending = 0; }
   }
 
@@ -138,6 +144,7 @@ export class Game {
 
   nextWave() {
     this.wave++;
+    while (this.downed.length) this.wreckLands(0);   // the planes are about to be repainted for the new wave
     let count = Math.min(MAX_ENEMIES, 1 + Math.ceil(this.wave * 0.9));
     let skill = Math.min(1, 0.32 + this.wave * 0.085);
     if (this.daily) {   // the day's composition: an extra bandit on some waves, a touch more or less skill
@@ -262,7 +269,8 @@ export class Game {
     this.world.scare(this.airship.pos, 400);
     this.shakeAt(this.airship.pos, 1.2);
     this.audio.explosion(this.airship.pos.distanceTo(this.player.pos), 2.4);
-    this.killCam = 1.4; this.killPoint.copy(this.airship.pos);
+    this.killCam = 1.4; this.killPoint.copy(this.airship.pos); this.killFollow = null;
+    this.killPunch(this.airship.pos, 1.8);
     this.killAngle = Math.atan2(this.camera.position.x - this.airship.pos.x, this.camera.position.z - this.airship.pos.z);
     let fled = 0;
     for (const e of this.enemies) { if (!e.ac.alive) continue; this.effects.spawnFlash(e.ac.pos, 5, 0.25); e.ac.alive = false; e.ac.hide(); for (const t of e.ac.trails) this.trails.reset(t); e.pending = 0; fled++; }
@@ -340,15 +348,81 @@ export class Game {
     this.audio.gun(ac === this.player ? 0 : ac.pos.distanceTo(this.player.pos));
   }
 
-  killAircraft(ac, size = 1) {
-    ac.alive = false; ac.hide(); ac.health = 0;
+  /** `burn`: shot down in the air, so the plane does not vanish in its explosion but falls on fire and blows up again
+   *  where it lands (see wreckLands). Otherwise (a crash, a ram) it is gone in one blast. */
+  killAircraft(ac, size = 1, burn = false) {
+    ac.alive = false; ac.health = 0;
     for (const t of ac.trails) this.trails.reset(t);
     const c = ac.plane.scheme;
     this.effects.explosion(ac.pos, [c.body, c.accent, c.trim, 0x333333], size);
-    this.effects.wreck(ac.pos, ac.velocity, [c.body, c.accent, c.trim]);
     this.world.scare(ac.pos, 180);
     this.shakeAt(ac.pos, 0.3 * size);
     this.audio.explosion(ac.pos.distanceTo(this.player.pos), size);
+    if (burn) {
+      ac.scorchLevel = 5; ac.plane.scorch(1);
+      if (ac.plane.lostTip < 0) { ac.plane.lostTip = Math.random() < 0.5 ? 0 : 1; ac.shedTip = true; this.shedTip(ac); }
+      this.downed.push({ ac, t: 0, spin: (Math.random() < 0.5 ? -1 : 1) * rnd(2.5, 4.5), smoke: 0 });
+      return;
+    }
+    ac.hide();
+    this.effects.wreck(ac.pos, ac.velocity, [c.body, c.accent, c.trim]);
+  }
+
+  /** The `i`th falling wreck hits the ground or the sea (or has fallen long enough): a second, bigger blast. */
+  wreckLands(i) {
+    const { ac } = this.downed[i];
+    this.downed.splice(i, 1);
+    ac.hide();
+    const c = ac.plane.scheme, water = isWaterAt(ac.pos.x, ac.pos.z);
+    if (ac.pos.y < groundAt(ac.pos.x, ac.pos.z) + 3) ac.pos.y = groundAt(ac.pos.x, ac.pos.z) + 1;
+    this.effects.explosion(ac.pos, [c.body, c.accent, c.trim, 0x333333], 1.2);
+    this.effects.wreck(ac.pos, ac.velocity, [c.body, c.accent, c.trim]);
+    if (water) this.effects.splash(ac.pos, 1.2);
+    this.world.scare(ac.pos, 220);
+    this.shakeAt(ac.pos, 0.35);
+    this.audio.explosion(ac.pos.distanceTo(this.player.pos), 1.3);
+    if (this.killFollow === ac) this.killFollow = null;
+  }
+
+  /** A kill's kick: a shockwave at `pos`, and the picture and the lens jolt, harder the longer the chain. */
+  killPunch(pos, size = 1) {
+    const chain = 1 + 0.3 * Math.max(0, this.combo - 1);
+    this.effects.shockwave(pos, size * chain);
+    this.punch = Math.max(this.punch, Math.min(1, (0.5 + 0.17 * this.combo) * size));
+  }
+
+  /** A player's bullet has struck `t` at `point`. */
+  strike(t, point, dmg) {
+    const p = this.player;
+    this.effects.hitSpark(point);
+    this.audio.hit(t.pos.distanceTo(p.pos));
+    this.hits++; this.waveHits++;
+    if (t.absorb) { this.addScore(1); return; }   // the envelope: a spark and nothing else
+    const killed = t.damage(dmg);
+    this.hud.hitmark(killed);
+    // how much hull it has left, which the confirm tick climbs in pitch to tell you
+    const left = t.ship ? (t.turret >= 0 ? t.ship.turrets[t.turret].hp / 30 : t.ship.hp / t.ship.maxHp) : t.health / t.maxHealth;
+    this.audio.confirm(killed ? 0 : left, killed);
+    if (!killed) { this.addScore(2); return; }
+    if (t.ship && t.turret >= 0) { this.addScore(150); this.hud.kill('TURRET DOWN  +150'); this.hud.popup(t.pos, '+150'); this.audio.explosion(t.pos.distanceTo(p.pos), 0.7); this.world.scare(t.pos, 140); this.killPunch(t.pos, 0.7); return; }
+    if (t.ship) { this.addScore(10); return; }   // the gondola is done: the airship handles its own fall
+    const type = this.enemies.find((e) => e.ac === t)?.type || 'hound';
+    this.killAircraft(t, 1, true);
+    this.registerKill(TYPE_LABEL[type], TYPE_SCORE[type] * this.wave, t.pos);
+    this.killPunch(t.pos);
+    if (p.pos.y - groundAt(p.pos.x, p.pos.z) < 8) this.earn('wavetop');
+    const last = this.pending === 0 && !this.enemies.some((e) => e.ac.alive) && !this.airship.alive;
+    if (!last && type === 'ace') {   // an ace down earns a banner and a short turn of the camera round its wreck
+      this.hud.banner('ACE DOWN', 1300);
+      this.followKill(t, 0.4);
+    } else if (last) this.followKill(t, 0.7);   // the wave's last bandit: swing round its burning wreck in slow motion
+    else this.hitStop = Math.min(0.16, 0.06 + 0.025 * (this.combo - 1));   // a chain freezes a touch longer each time
+  }
+
+  /** The kill cam: a slow orbit of `ac`'s wreck for `secs`, following it down. */
+  followKill(ac, secs) {
+    this.killCam = secs; this.killPoint.copy(ac.pos); this.killFollow = ac;
+    this.killAngle = Math.atan2(this.camera.position.x - ac.pos.x, this.camera.position.z - ac.pos.z);
   }
 
   nearestEnemy(range) {
@@ -413,7 +487,7 @@ export class Game {
     this.addScore(pts);
     this.hud.kill(`${label}  +${pts}`);
     if (at) this.hud.popup(at, `+${pts}`, this.combo > 1);
-    if (this.combo > 1) { this.hud.combo(this.combo); this.effects.shake = Math.max(this.effects.shake, 0.25 + this.combo * 0.08); }
+    if (this.combo > 1) { this.hud.combo(this.combo, CALLS[this.combo]); this.effects.shake = Math.max(this.effects.shake, 0.25 + this.combo * 0.08); }
     this.hud.bump('score');
     this.audio.kill(this.combo);
   }
@@ -568,30 +642,16 @@ export class Game {
 
     // ---- bullets
     const targets = this.targetList;
-    this.playerBullets.update(dt, targets, (t, point, dmg) => {
-      this.effects.hitSpark(point);
-      this.audio.hit(t.pos.distanceTo(p.pos));
-      this.hits++; this.waveHits++;
-      if (t.absorb) { this.addScore(1); return; }   // the envelope: a spark and nothing else
-      if (t.damage(dmg)) {
-        if (t.ship && t.turret >= 0) { this.addScore(150); this.hud.kill('TURRET DOWN  +150'); this.hud.popup(t.pos, '+150'); this.audio.explosion(t.pos.distanceTo(p.pos), 0.7); this.world.scare(t.pos, 140); return; }
-        if (t.ship) { this.addScore(10); return; }   // the gondola is done: the airship handles its own fall
-        const type = this.enemies.find((e) => e.ac === t)?.type || 'hound';
-        this.killAircraft(t, 1); this.registerKill(TYPE_LABEL[type], TYPE_SCORE[type] * this.wave, t.pos);
-        if (p.pos.y - groundAt(p.pos.x, p.pos.z) < 8) this.earn('wavetop');
-        const last = this.pending === 0 && !this.enemies.some((e) => e.ac.alive) && !this.airship.alive;
-        if (!last && type === 'ace') {   // an ace down earns a banner and a short turn of the camera round its wreck
-          this.hud.banner('ACE DOWN', 1300);
-          this.killCam = 0.4; this.killPoint.copy(t.pos);
-          this.killAngle = Math.atan2(this.camera.position.x - t.pos.x, this.camera.position.z - t.pos.z);
-        } else if (last) {
-          // the wave's last bandit: swing the camera round its explosion in slow motion
-          this.killCam = 0.7; this.killPoint.copy(t.pos);
-          this.killAngle = Math.atan2(this.camera.position.x - t.pos.x, this.camera.position.z - t.pos.z);
-        } else this.hitStop = Math.min(0.11, 0.05 + 0.02 * (this.combo - 1));   // a chain freezes a touch longer
-      }
-      else this.addScore(2);
-    }, (pt, water) => this.effects.groundHit(pt, water), this.assist);
+    this.playerBullets.update(dt, targets, (t, point, dmg) => this.strike(t, point, dmg), (pt, water) => this.effects.groundHit(pt, water), this.assist);
+    // shot-down planes fall burning until they hit something
+    for (let i = this.downed.length - 1; i >= 0; i--) {
+      const d = this.downed[i], ac = d.ac;
+      d.t += dt;
+      ac.fall(dt, d.spin);
+      d.smoke -= dt;
+      if (d.smoke <= 0) { d.smoke = 0.022; this.effects.burn(tv.copy(ac.pos).addScaledVector(ac.forward, -2), ac.velocity); }
+      if (ac.pos.y < groundAt(ac.pos.x, ac.pos.z) + 2 || d.t > 3.5) this.wreckLands(i);
+    }
     this.enemyBullets.update(dt, p.alive ? [p] : [], (t, point, dmg, owner) => { this.effects.hitSpark(point); if (owner === this.airship) this.turretDamage += dmg; this.hurtPlayer(dmg, owner.pos); }, (pt, water) => this.effects.groundHit(pt, water));
     if (p.alive) {   // near misses: a bandit's bullet inside ten units of you that did not hit
       const eb = this.enemyBullets, P = eb.pos;
@@ -628,7 +688,10 @@ export class Game {
     // draw every plane between its last two sim states, then place the camera on the drawn pose
     if (this.player.alive) this.present(this.player);
     for (const e of this.enemies) if (e.ac.alive) this.present(e.ac);
+    for (const d of this.downed) d.ac.present(this.alpha);
+    this.punch *= Math.exp(-dt * 5);
     this.updateCamera(dt);
+    this.effects.eye.copy(this.camera.position);
     const alive = this.player.alive && this.state === 'playing', pl = this.player;
     this.audio.setFlight(alive ? pl.speed : 0, alive ? pl.input.throttle : 0, alive && this.outside, dt, alive ? pl.health / pl.maxHealth : 1,
       alive ? this.groundRush() : 0, alive ? clamp(Math.abs(pl.pitchVel) / pl.stats.pitchRate, 0, 1) : 0);
@@ -823,6 +886,7 @@ export class Game {
       return;
     }
     if (this.killCam > 0) {
+      if (this.killFollow) this.killPoint.lerp(this.killFollow.renderPos, 1 - Math.exp(-dt * 6));
       const u = 1 - this.killCam / 0.7, ang = this.killAngle + u * 1.7;
       tv.set(Math.sin(ang) * 34, 12 + u * 12, Math.cos(ang) * 34).add(this.killPoint);
       tv.y = Math.max(tv.y, groundAt(tv.x, tv.z) + 4);
@@ -856,7 +920,7 @@ export class Game {
     if (fx.shake > 0) cam.rotateZ(rnd(-1, 1) * fx.shake * 0.02);
     const targetFov = 62 + boost * 9 + Math.max(0, p.speed - PLAYER_STATS.cruise) * 0.08 + this.camKick * 1.5;
     this.fov += (targetFov - this.fov) * Math.min(1, dt * 3);
-    cam.fov = this.fov; cam.updateProjectionMatrix();
+    cam.fov = this.fov + this.punch * 5; cam.updateProjectionMatrix();   // a kill kicks the lens wide for an instant
   }
 
   idle() {

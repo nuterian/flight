@@ -17,7 +17,7 @@ export class Sound {
     document.addEventListener('visibilitychange', wake);
     window.addEventListener('keydown', wake); window.addEventListener('pointerdown', wake);
     this.warnTimer = 0; this.warnHi = false; this.beatTimer = 0;
-    this.lastGun = 0; this.lastHit = 0; this.lastWhiz = 0; this.lastDive = 0; this.lastWhoosh = 0;
+    this.lastGun = 0; this.lastHit = 0; this.lastConfirm = 0; this.lastWhiz = 0; this.lastDive = 0; this.lastWhoosh = 0;
   }
 
   /** Creates the graph. Must be called from a user gesture (start). */
@@ -194,6 +194,18 @@ export class Sound {
     src.connect(lp); lp.connect(g); g.connect(this.bus); src.start(t); src.stop(t + 0.95);
     // sub-bass thump
     this.blip(62, 26, 'sine', 0.55, 0.8 * a);
+  }
+
+  /** Your own hit, heard in the cockpit whatever the range: a tick that climbs as the target's hull runs out
+   *  (`left`, 1..0), and a brighter double tick on the hit that kills. */
+  confirm(left = 1, killed = false) {
+    if (!this.ctx) return;
+    const t = this.ctx.currentTime;
+    if (!killed && t - this.lastConfirm < 0.045) return;
+    this.lastConfirm = t;
+    const f = 1500 + 1300 * (1 - clamp(left, 0, 1));
+    this.tone(f, 'square', 0.035, 0.035);
+    if (killed) this.tone(f * 1.5, 'square', 0.06, 0.04, 0.05);
   }
 
   kill(combo = 1) {

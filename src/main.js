@@ -1,5 +1,5 @@
 import * as THREE from 'three/webgpu';
-import { pass, mrt, output, emissive, vec2, vec3, vec4, float, screenUV, smoothstep, mix, luminance, color, Fn, If, Loop, length } from 'three/tsl';
+import { pass, mrt, output, emissive, vec2, vec3, vec4, float, screenUV, smoothstep, mix, luminance, color, Fn, If, Loop, length, uniform } from 'three/tsl';
 import { gaussianBlur } from 'three/addons/tsl/display/GaussianBlurNode.js';
 import { createWorld } from './world.js';
 import { LIGHTS } from './times.js';
@@ -123,7 +123,9 @@ async function boot() {
     const vignette = smoothstep(0.45, 1.25, screenUV.sub(0.5).length()).mul(0.22);
     return vec4(rgb.mul(float(1).sub(vignette)), 1);
   };
-  const playGraph = grade(smeared.add(halo).add(vec4(shafts, 0)));
+  // A kill's punch (game.punch, 0..1): for an instant the glow swells and the picture brightens a touch.
+  const punch = uniform(0);
+  const playGraph = grade(smeared.add(halo.mul(punch.mul(1.4).add(1))).add(vec4(shafts, 0)).mul(punch.mul(0.12).add(1)));
   // Title screen only: a shallow depth of field on the cinematic orbit, as a quarter-resolution blur mixed in by
   // depth, sharp at the letters and soft on the isles behind them. Two passes. Off in play, never on mobile.
   const titleGraph = mobile ? null : (() => {
@@ -380,6 +382,7 @@ async function boot() {
     world.update(frame, now / 1000, game.player.renderPos, camera, game.player.alive ? game.player.speed : 0);
     title.update(frame, now / 1000, camera, game.state === 'title');
     lit.flush(); glow.flush(); soft.flush();
+    punch.value = game.punch;
     pipeline.render();
     if (meter.on) measure(sinceLast, performance.now() - began, now);
   });

@@ -76,6 +76,12 @@ body:not(.ready) #title { display: none; }
 #crosshair .h { width: 38px; height: 1.5px; margin: -0.75px 0 0 -19px; -webkit-mask: linear-gradient(90deg, #000 0 26%, transparent 26% 74%, #000 74%); mask: linear-gradient(90deg, #000 0 26%, transparent 26% 74%, #000 74%); }
 #crosshair .v { width: 1.5px; height: 38px; margin: -19px 0 0 -0.75px; -webkit-mask: linear-gradient(180deg, #000 0 26%, transparent 26% 74%, #000 74%); mask: linear-gradient(180deg, #000 0 26%, transparent 26% 74%, #000 74%); }
 #crosshair.fire { transform: scale(0.86); }
+/* hit confirmation: four ticks on the diagonals, flashed by hud.hitmark (red on the hit that kills) */
+#crosshair .x { position: absolute; left: 50%; top: 50%; width: 34px; height: 34px; margin: -17px 0 0 -17px; opacity: 0; transform: rotate(45deg); }
+#crosshair .x::before, #crosshair .x::after { content: ""; position: absolute; left: 50%; top: 50%; background: var(--hud); box-shadow: 0 0 0 1px rgba(29,43,58,0.3); }
+#crosshair .x::before { width: 34px; height: 2px; margin: -1px 0 0 -17px; -webkit-mask: linear-gradient(90deg, #000 0 30%, transparent 30% 70%, #000 70%); mask: linear-gradient(90deg, #000 0 30%, transparent 30% 70%, #000 70%); }
+#crosshair .x::after { width: 2px; height: 34px; margin: -17px 0 0 -1px; -webkit-mask: linear-gradient(180deg, #000 0 30%, transparent 30% 70%, #000 70%); mask: linear-gradient(180deg, #000 0 30%, transparent 30% 70%, #000 70%); }
+#crosshair .x.kill::before, #crosshair .x.kill::after { background: var(--coral); box-shadow: 0 0 6px rgba(255,107,87,0.8); }
 #leadret { position: absolute; width: 30px; height: 30px; margin: -15px 0 0 -15px; border: 1.5px dashed var(--sun); border-radius: 50%; display: none; filter: drop-shadow(0 1px 0 rgba(0,0,0,0.4)); animation: spin 6s linear infinite; }
 #leadret.locked { border-style: solid; border-color: var(--coral); animation: none; box-shadow: 0 0 10px rgba(255, 107, 87, 0.5); }
 @keyframes spin { to { transform: rotate(360deg); } }

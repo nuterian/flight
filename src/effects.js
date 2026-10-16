@@ -32,6 +32,7 @@ const KIND = {
     batch: 'soft', g: 0, drag: 0, draw: (fx, it, f) => {
       const d = (4 + it.radius * (1 - (1 - f) * (1 - f))) * 2;
       fx.soft.scalar(it.i, softParam(it.alpha * (1 - f), it.inner + it.spread * f));
+      if (it.face) it.q.setFromUnitVectors(Z_AXIS, p.copy(fx.eye).sub(it.p).normalize());   // a shockwave keeps facing the camera
       fx.soft.matrix(it.i, m.compose(it.p, it.q, s.set(d, d, 1)));
     },
   },
@@ -42,6 +43,7 @@ export class Effects {
     this.lit = lit; this.glow = glow; this.soft = soft;
     this.particles = []; this.pool = [];
     this.shake = 0;
+    this.eye = new THREE.Vector3();   // where the camera is, for anything drawn to face it (set by the game)
   }
 
   /** A particle of `kind` at `pos` moving at `vel`: takes a box from the kind's batch (the live particle nearest its
@@ -57,7 +59,7 @@ export class Effects {
       i = this.drop(k).i;
     }
     const it = this.pool.pop() || { p: new THREE.Vector3(), v: new THREE.Vector3(), r: new THREE.Vector3(), a: new THREE.Vector3(), dim: new THREE.Vector3(), q: new THREE.Quaternion() };
-    it.kind = kind; it.i = i; it.t = 0; it.life = life;
+    it.kind = kind; it.i = i; it.t = 0; it.life = life; it.face = false;
     it.p.copy(pos); it.v.copy(vel); it.r.set(0, 0, 0); it.a.set(0, 0, 0);
     this.particles.push(it);
     return it;
@@ -71,8 +73,9 @@ export class Effects {
   }
 
   explosion(pos, colors, size = 1) {
-    // Flash
-    this.spawnFlash(pos, 9 * size, 0.35);
+    // Flash: a scatter of small hot cubes rather than one big one, so up close (the kill cam) it reads as a burst with
+    // the fireball showing through, not a white box
+    for (let k = 0; k < 6; k++) this.spawnFlash(p.copy(pos).add(s.set(rnd(-4, 4), rnd(-4, 4), rnd(-4, 4)).multiplyScalar(size)), rnd(1.8, 3.2) * size, rnd(0.14, 0.24), 3);
     // Fireball puffs
     for (let k = 0; k < 10 * size; k++) {
       const hot = Math.random() < 0.7;
@@ -141,6 +144,21 @@ export class Effects {
     it.radius = 20; it.alpha = 0.7; it.inner = 0.3; it.spread = 0.1;
   }
 
+  /** A kill's shockwave: a thin bright ring that bursts out from `pos`, always turned to face the camera. */
+  shockwave(pos, size = 1) {
+    const it = this.spawn('ring', pos, STILL, 0.42); if (!it) return;
+    this.soft.color(it.i, 0xfff1d0);
+    it.q.setFromUnitVectors(Z_AXIS, s.copy(this.eye).sub(pos).normalize()); it.face = true;
+    it.radius = 24 * size; it.alpha = 0.6; it.inner = 0.42; it.spread = 0.06;
+  }
+
+  /** A shot-down plane on fire: flame that cools to black smoke behind it as it falls. */
+  burn(pos, vel) {
+    const hot = Math.random() < 0.55;
+    this.spawnPuff(p.copy(pos).add(s.set(rnd(-1, 1), rnd(-1, 1), rnd(-1, 1))), s.set(rnd(-2, 2), rnd(1, 4), rnd(-2, 2)).addScaledVector(vel, 0.12),
+      hot ? (Math.random() < 0.5 ? 0xff7a3d : 0xffc24a) : 0x555b66, hot ? rnd(0.8, 1.3) : rnd(0.8, 1.3), hot ? rnd(0.45, 0.7) : rnd(0.9, 1.4), hot);
+  }
+
   trailSmoke(pos, vel, heavy) {
     this.spawnPuff(pos, s.set(rnd(-2, 2), rnd(0, 3), rnd(-2, 2)).addScaledVector(vel, 0.1), heavy ? 0x3a3f4a : 0x8b929c, heavy ? 1.6 : 1.0, heavy ? 1.6 : 1.0, heavy && Math.random() < 0.3);
   }
@@ -155,9 +173,9 @@ export class Effects {
     this.lit.color(it.i, hex, hot ? 1.8 : 1); this.lit.scalar(it.i, 1);
     it.size = size * 1.6; it.hot = hot; it.hex = hex; it.rot = rnd(0, 6);
   }
-  spawnFlash(pos, size, life) {
+  spawnFlash(pos, size, life, glow = 4.5) {
     const it = this.spawn('flash', pos, STILL, life); if (!it) return;
-    this.glow.color(it.i, 0xffd27a); this.glow.scalar(it.i, 4.5);
+    this.glow.color(it.i, 0xffd27a); this.glow.scalar(it.i, glow);
     it.size = size * 1.4;
   }
   spawnRing(pos, delay, radius) {

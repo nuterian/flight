@@ -152,6 +152,26 @@ export class Aircraft {
     if (this.hitFlash > 0) this.hitFlash -= dt;
   }
 
+  /** Shot down: no pilot and no lift. The plane keeps its momentum, drops, rolls faster and faster and noses over into
+   *  its own fall, scorched black with the engine dead. `spin` is the roll rate it winds up to. */
+  fall(dt, spin) {
+    this.prevPos.copy(this.pos); this.prevQuat.copy(this.quat);
+    this.velocity.y -= 26 * dt;
+    this.velocity.multiplyScalar(1 - 0.12 * dt);
+    this.pos.addScaledVector(this.velocity, dt);
+    this.speed = this.velocity.length();
+    this.rollVel += (spin - this.rollVel) * Math.min(1, dt * 1.5);
+    this.pitchVel *= 1 - Math.min(1, dt * 3); this.yawVel = 0;
+    this.quat.multiply(tq.setFromAxisAngle(NEG_Z, this.rollVel * dt));
+    this.updateAxes();
+    tq.setFromUnitVectors(this.forward, tv.copy(this.velocity).normalize());   // the nose follows the fall
+    this.quat.premultiply(tq2.identity().slerp(tq, Math.min(1, dt * 2.5))).normalize();
+    this.updateAxes();
+    this.input.throttle = -1; this.sputter = true;
+    this.plane.angles.prop += dt * 1.5;
+    this.age += dt;
+  }
+
   /** Returns world-space muzzle position for the next shot, alternating wings. */
   nextMuzzle(out) {
     const g = GUNS[this.gunSide];

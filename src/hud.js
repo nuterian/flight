@@ -12,7 +12,7 @@ export class Hud {
   constructor() {
     this.el = {
       hud: $('hud'), score: $('score'), wave: $('wave'), enemies: $('enemies'), health: $('health'), speed: $('speed'),
-      crosshair: $('crosshair'), lead: $('leadret'), markers: $('markers'), banner: $('banner'), warning: $('warning'),
+      crosshair: $('crosshair'), hitmark: document.querySelector('#crosshair .x'), lead: $('leadret'), markers: $('markers'), banner: $('banner'), warning: $('warning'),
       vignette: $('vignette'), title: $('title'), gameover: $('gameover'), best: $('best'), bestwave: $('bestwave'), newbest: $('newbest'), touch: $('touch'),
       portal: $('portalmark'), popups: $('popups'), hitarc: $('hitarc'), landmarks: $('landmarks'), dbmode: $('dbmode'), dbtitle: $('dbtitle'), notice: $('notice'), dbscore: document.querySelector('#gameover .scoreline'), dbtiles: $('dbtiles'), dblog: $('dblog'), dbmedal: $('dbmedal'), share: $('btn-share'), gohint: $('gohint'), medals: $('medals'), dailyinfo: $('dailyinfo'),
       healthwrap: $('healthwrap'), killfeed: $('killfeed'), combo: $('combo'), mute: $('mute'), pips: $('pips'), speedbar: $('speedbar'), btnMute: $('btn-mute'),
@@ -71,7 +71,14 @@ export class Hud {
     this.popupsLive.push({ el, pos: worldPos.clone(), t: 0 });
   }
 
-  combo(n) { const c = this.el.combo; c.textContent = `x${n} COMBO`; c.classList.add('show'); restart(c, 'pop'); }
+  combo(n, call) { const c = this.el.combo; c.textContent = call ? `${call} x${n}` : `x${n} COMBO`; c.classList.add('show'); restart(c, 'pop'); }
+  /** Your bullet landed: the four ticks round the crosshair flash, bigger and red on the hit that kills. Played with
+   *  the Web Animations API so a burst of hits restarts it without laying out the page each time. */
+  hitmark(killed) {
+    const k = killed ? 1.5 : 1;
+    this.el.hitmark.classList.toggle('kill', killed);
+    this.el.hitmark.animate([{ opacity: 1, transform: `rotate(45deg) scale(${1.25 * k})` }, { opacity: 0, transform: `rotate(45deg) scale(${k})` }], { duration: killed ? 420 : 160, easing: 'cubic-bezier(0.2, 0.8, 0.3, 1)' });
+  }
   /** A bullet just missed: the crosshair flicks. */
   whiz() { restart(this.el.crosshair, 'whiz'); }
   comboOff() { this.el.combo.classList.remove('show'); }

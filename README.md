@@ -109,7 +109,9 @@ note is generated in code.
   profiler (`__aiProfile` in dev builds) that flies a scripted average pilot through a wave and reports how much of
   the time you are hunted, tailed, or have a shot.
 - **Feel.** Fixed 120 Hz simulation, hit-stop and distance-scaled shake, a camera that lags through hard turns and
-  kicks with the guns, a slow-motion orbit on the last kill of a wave, wreckage that tumbles and smokes, damage
+  kicks with the guns, a tick in the cockpit for every hit that climbs as the target's hull runs out, bandits that
+  do not vanish when shot down but fall burning and blow up again where they land, a shockwave and a punch of light
+  on every kill that grows with the chain, a slow-motion orbit that follows the last wreck of a wave down, damage
   states, sea spray and dust on low passes, birds, gulls, sheep, wolves, villagers, and a title built from riveted red plates
   in the plane's own livery.
 - **Sound.** Procedural Web Audio: engine pitched to speed, wind that roughens under g, a low rush of air when
